@@ -211,6 +211,42 @@ function detectBacktracking(body: string, funcName: string): boolean {
 // Time complexity
 // ---------------------------------------------------------------------------
 
+/**
+ * Detect mutual recursion: f calls g, g calls f.
+ * Returns the set of function names involved in any mutually-recursive cycle.
+ */
+function findMutuallyRecursive(funcs: FuncBody[]): Set<string> {
+  const nameSet = new Set(funcs.map((f) => f.name));
+  // Build call graph: which other extracted functions does each func call?
+  const callGraph = new Map<string, Set<string>>();
+  for (const func of funcs) {
+    const callees = new Set<string>();
+    for (const other of funcs) {
+      if (other.name === func.name) continue;
+      if (new RegExp(`\\b${other.name}\\s*\\(`).test(func.body)) {
+        callees.add(other.name);
+      }
+    }
+    callGraph.set(func.name, callees);
+  }
+  // Find cycles: for each function, check if there's a path back to itself
+  const mutual = new Set<string>();
+  for (const start of nameSet) {
+    const visited = new Set<string>();
+    const stack = [...(callGraph.get(start) || [])];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (cur === start) { mutual.add(start); break; }
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      for (const next of callGraph.get(cur) || []) {
+        stack.push(next);
+      }
+    }
+  }
+  return mutual;
+}
+
 function estimateTime(code: string): string {
   const funcs = extractFunctions(code);
 
@@ -222,6 +258,27 @@ function estimateTime(code: string): string {
   let isBacktracking = false;
   let argPattern: ReturnType<typeof classifyArgs> = "unknown";
 
+  // Check for mutual recursion
+  const mutualSet = findMutuallyRecursive(funcs);
+  if (mutualSet.size > 0) {
+    isRecursive = true;
+    // Mutual recursion is at least linear; analyse the bodies involved
+    for (const func of funcs) {
+      if (!mutualSet.has(func.name)) continue;
+      if (/(?:\/\s*2|\bmid\b)/.test(func.body)) hasDividePattern = true;
+      if (/\b(?:for|while|do)\s*[({]/.test(func.body)) hasLoopInBody = true;
+      // Count cross-calls as effective branches
+      let crossCalls = 0;
+      for (const other of funcs) {
+        if (other.name === func.name) continue;
+        if (mutualSet.has(other.name) && new RegExp(`\\b${other.name}\\s*\\(`).test(func.body)) {
+          crossCalls++;
+        }
+      }
+      effectiveCalls = Math.max(effectiveCalls, crossCalls);
+    }
+  }
+
   for (const func of funcs) {
     const calls = findRecursiveCalls(func.body, func.name);
     if (calls.length === 0) continue;
@@ -231,7 +288,7 @@ function estimateTime(code: string): string {
     effectiveCalls = Math.max(effectiveCalls, ec);
 
     if (/(?:\/\s*2|\bmid\b)/.test(func.body)) hasDividePattern = true;
-    if (/\b(?:for|while)\s*\(/.test(func.body)) hasLoopInBody = true;
+    if (/\b(?:for|while|do)\s*[({]/.test(func.body)) hasLoopInBody = true;
     if (detectBacktracking(func.body, func.name)) isBacktracking = true;
 
     const ap = classifyArgs(calls);
@@ -327,8 +384,18 @@ function getMaxLoopDepth(code: string): number {
   let maxDepth = 0;
 
   // Find loop keywords and locate where their condition parentheses end
+  // Includes do...while by finding the { after 'do'
   const loopRegex = /\b(?:for|while)\s*\(/g;
+  const doRegex = /\bdo\s*\{/g;
   const loopCondEnds: number[] = [];
+  const doLoopBraces: number[] = [];
+
+  // Collect do...while loop brace positions
+  let dm: RegExpExecArray | null;
+  while ((dm = doRegex.exec(code)) !== null) {
+    const bracePos = code.indexOf("{", dm.index);
+    if (bracePos >= 0) doLoopBraces.push(bracePos);
+  }
 
   let m: RegExpExecArray | null;
   while ((m = loopRegex.exec(code)) !== null) {
@@ -361,20 +428,22 @@ function getMaxLoopDepth(code: string): number {
   tokens.sort((a, b) => a.pos - b.pos);
 
   // Track loop depth — only count a { as a loop brace if it immediately
-  // follows a loop condition's closing ), preventing the "expectBrace leak"
+  // follows a loop condition's closing ) or is a do{ brace
   let loopDepth = 0;
   let lastLoopEnd = -1;
   const braceStack: boolean[] = [];
+  const doLoopSet = new Set(doLoopBraces);
 
   for (const tok of tokens) {
     if (tok.type === "loopEnd") {
       lastLoopEnd = tok.pos;
     } else if (tok.type === "open") {
-      const isLoopBrace =
+      const isForWhileBrace =
         lastLoopEnd >= 0 &&
         code.substring(lastLoopEnd, tok.pos).trim() === "";
+      const isDoLoopBrace = doLoopSet.has(tok.pos);
       lastLoopEnd = -1;
-      if (isLoopBrace) {
+      if (isForWhileBrace || isDoLoopBrace) {
         loopDepth++;
         braceStack.push(true);
       } else {
@@ -388,16 +457,27 @@ function getMaxLoopDepth(code: string): number {
     }
   }
 
-  // Handle braceless loops (for/while with no { after condition)
-  if (maxDepth === 0 && loopCondEnds.length > 0) {
+  // Handle braceless loops (for/while/do with no { after condition)
+  if (maxDepth === 0 && (loopCondEnds.length > 0 || doLoopBraces.length > 0)) {
     maxDepth = 1;
   }
 
-  // Handle nested braceless for loops: for(...)\n  for(...)
-  const forNoBrace = code.match(/for\s*\([^)]*\)\s*\n\s*for/g);
-  if (forNoBrace) {
-    const depth = forNoBrace.length + 1;
-    if (depth > maxDepth) maxDepth = depth;
+  // Handle nested braceless loops by counting consecutive loop keywords
+  // that are not separated by braces (e.g. for(...)\n  for(...)\n    stmt;)
+  const bracelessLoopRe = /\b(?:for|while)\s*\([^)]*\)\s*\n/g;
+  let bm: RegExpExecArray | null;
+  while ((bm = bracelessLoopRe.exec(code)) !== null) {
+    let consecutiveDepth = 1;
+    let pos = bm.index + bm[0].length;
+    // Look ahead for more braceless loop starts
+    const nextLoopRe = /^\s*(?:for|while)\s*\([^)]*\)\s*\n/;
+    let remaining = code.substring(pos);
+    while (nextLoopRe.test(remaining)) {
+      consecutiveDepth++;
+      const match = remaining.match(nextLoopRe)!;
+      remaining = remaining.substring(match[0].length);
+    }
+    if (consecutiveDepth > maxDepth) maxDepth = consecutiveDepth;
   }
 
   return maxDepth;

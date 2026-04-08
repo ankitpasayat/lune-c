@@ -1,6 +1,23 @@
 import Editor from "@/components/editor";
 import Exercise from "@/components/exercise";
 import Complexity from "@/components/complexity";
+import { ErrorBoundary } from "@/components/error-boundary";
+
+function SafeEditor(props: React.ComponentProps<typeof Editor>) {
+  return (
+    <ErrorBoundary>
+      <Editor {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function SafeExercise(props: React.ComponentProps<typeof Exercise>) {
+  return (
+    <ErrorBoundary>
+      <Exercise {...props} />
+    </ErrorBoundary>
+  );
+}
 
 // Wrapper: code block with optional complexity annotation
 function CodeBlock({
@@ -27,8 +44,8 @@ function CodeBlock({
 // Custom MDX components available inside lesson files
 export function getMDXComponents() {
   return {
-    Editor,
-    Exercise,
+    Editor: SafeEditor,
+    Exercise: SafeExercise,
     Complexity,
     CodeBlock,
     // Custom callout for "modern context" connections

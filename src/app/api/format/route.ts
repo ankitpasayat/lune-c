@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 function formatCode(source: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -29,6 +30,14 @@ function formatCode(source: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const limit = checkRateLimit(req, { maxRequests: 40, windowMs: 60_000 });
+  if (!limit.success) {
+    return NextResponse.json(
+      { error: "Too many requests. Try again later." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil(limit.retryAfterMs / 1000)) } }
+    );
+  }
+
   try {
     const body = await req.json();
     const { source_code } = body;
@@ -49,7 +58,8 @@ export async function POST(req: NextRequest) {
 
     const formatted = await formatCode(source_code);
     return NextResponse.json({ formatted });
-  } catch {
+  } catch (error) {
+    console.error("Format API error:", error instanceof Error ? error.message : String(error));
     return NextResponse.json(
       { error: "Formatting failed" },
       { status: 500 }

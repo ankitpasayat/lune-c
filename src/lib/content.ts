@@ -4,6 +4,13 @@ import matter from "gray-matter";
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
 
+/** Only allow slug-safe characters: lowercase alphanumeric with hyphens */
+const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function isValidSlug(slug: string): boolean {
+  return SLUG_PATTERN.test(slug);
+}
+
 export interface LessonMeta {
   slug: string;
   title: string;
@@ -78,6 +85,8 @@ export function getLessonSource(
   moduleSlug: string,
   lessonSlug: string
 ): { source: string; meta: LessonMeta } | null {
+  if (!isValidSlug(moduleSlug) || !isValidSlug(lessonSlug)) return null;
+
   const filePath = path.join(CONTENT_DIR, moduleSlug, `${lessonSlug}.mdx`);
   if (!fs.existsSync(filePath)) return null;
 

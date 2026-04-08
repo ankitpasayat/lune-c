@@ -17,6 +17,7 @@ interface ExerciseProps {
   testCases: TestCase[];
   hints?: string[];
   className?: string;
+  storageKey?: string;  // localStorage key for auto-save
 }
 
 interface TestResult {
@@ -43,18 +44,31 @@ export default function Exercise({
   testCases,
   hints = [],
   className = "",
+  storageKey,
 }: ExerciseProps) {
-  const [code, setCode] = useState(starterCode);
+  const [code, setCode] = useState(() => {
+    if (storageKey && typeof window !== "undefined") {
+      const saved = localStorage.getItem(`lune-exercise-${storageKey}`);
+      if (saved) return saved;
+    }
+    return starterCode;
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [isFormatting, setIsFormatting] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
   const formattedStarter = useRef(starterCode);
+  const userHasEdited = useRef(false);
 
   // Pre-format on mount so Format button produces no diff on unchanged code
+  // Skip if code was restored from localStorage
   useEffect(() => {
+    if (storageKey && typeof window !== "undefined" && localStorage.getItem(`lune-exercise-${storageKey}`)) {
+      return; // Don't overwrite restored code
+    }
     let cancelled = false;
+    userHasEdited.current = false;
     fetch("/api/format", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -62,7 +76,7 @@ export default function Exercise({
     })
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled && d.formatted) {
+        if (!cancelled && d.formatted && !userHasEdited.current) {
           formattedStarter.current = d.formatted;
           setCode(d.formatted);
         }
@@ -70,6 +84,20 @@ export default function Exercise({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [starterCode]);
+
+  const handleCodeChange = useCallback((newCode: string) => {
+    userHasEdited.current = true;
+    setCode(newCode);
+  }, []);
+
+  // Auto-save to localStorage with debounce
+  useEffect(() => {
+    if (!storageKey) return;
+    const timer = setTimeout(() => {
+      localStorage.setItem(`lune-exercise-${storageKey}`, code);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [code, storageKey]);
 
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
@@ -115,7 +143,8 @@ export default function Exercise({
     setResult(null);
     setShowHint(false);
     setHintIndex(0);
-  }, []);
+    if (storageKey) localStorage.removeItem(`lune-exercise-${storageKey}`);
+  }, [storageKey]);
 
   const handleNextHint = useCallback(() => {
     if (!showHint) {
@@ -148,7 +177,7 @@ export default function Exercise({
 
       <CodeMirrorEditor
         value={code}
-        onChange={setCode}
+        onChange={handleCodeChange}
       />
 
       <div className="mt-2 flex items-center justify-between">

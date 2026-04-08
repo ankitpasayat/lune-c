@@ -12,6 +12,7 @@ interface EditorProps {
   className?: string;
   time?: string;   // e.g. "O(n)"
   space?: string;  // e.g. "O(1)"
+  storageKey?: string;  // localStorage key for auto-save
 }
 
 interface RunResult {
@@ -29,17 +30,30 @@ export default function Editor({
   className = "",
   time,
   space,
+  storageKey,
 }: EditorProps) {
-  const [code, setCode] = useState(defaultCode);
+  const [code, setCode] = useState(() => {
+    if (storageKey && typeof window !== "undefined") {
+      const saved = localStorage.getItem(`lune-editor-${storageKey}`);
+      if (saved) return saved;
+    }
+    return defaultCode;
+  });
   const [output, setOutput] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
   const [isFormatting, setIsFormatting] = useState(false);
   const [status, setStatus] = useState<string>("");
   const formattedDefault = useRef(defaultCode);
+  const userHasEdited = useRef(false);
 
   // Pre-format on mount so Format button produces no diff on unchanged code
+  // Skip if code was restored from localStorage
   useEffect(() => {
+    if (storageKey && typeof window !== "undefined" && localStorage.getItem(`lune-editor-${storageKey}`)) {
+      return; // Don't overwrite restored code
+    }
     let cancelled = false;
+    userHasEdited.current = false;
     fetch("/api/format", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -47,7 +61,7 @@ export default function Editor({
     })
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled && d.formatted) {
+        if (!cancelled && d.formatted && !userHasEdited.current) {
           formattedDefault.current = d.formatted;
           setCode(d.formatted);
         }
@@ -55,6 +69,20 @@ export default function Editor({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [defaultCode]);
+
+  const handleCodeChange = useCallback((newCode: string) => {
+    userHasEdited.current = true;
+    setCode(newCode);
+  }, []);
+
+  // Auto-save to localStorage with debounce
+  useEffect(() => {
+    if (!storageKey) return;
+    const timer = setTimeout(() => {
+      localStorage.setItem(`lune-editor-${storageKey}`, code);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [code, storageKey]);
 
   const handleRun = useCallback(async () => {
     setIsRunning(true);
@@ -110,7 +138,8 @@ export default function Editor({
     setCode(formattedDefault.current);
     setOutput("");
     setStatus("");
-  }, []);
+    if (storageKey) localStorage.removeItem(`lune-editor-${storageKey}`);
+  }, [storageKey]);
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
@@ -161,7 +190,7 @@ export default function Editor({
       <div className="overflow-hidden">
         <CodeMirrorEditor
           value={code}
-          onChange={setCode}
+          onChange={handleCodeChange}
         />
       </div>
 
