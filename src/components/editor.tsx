@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { Play, Loader2, RotateCcw, AlignLeft } from "lucide-react";
 import CodeMirrorEditor from "@/components/code-editor";
 import Complexity from "@/components/complexity";
-import { Play, Loader2, RotateCcw, AlignLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface EditorProps {

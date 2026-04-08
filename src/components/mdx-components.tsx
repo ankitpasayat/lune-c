@@ -31,9 +31,7 @@ function CodeBlock({
 }) {
   return (
     <div className="mb-4">
-      <pre className="overflow-x-auto rounded-lg border border-border bg-muted/50 p-4 font-mono text-[13px] leading-relaxed">
-        {children}
-      </pre>
+      {children}
       {(time || space) && (
         <Complexity time={time} space={space} className="mt-1.5" />
       )}
@@ -107,7 +105,8 @@ export function getMDXComponents() {
         </div>
       );
     },
-    // Typography overrides
+    // Typography overrides — children come via {...props} from MDX
+    /* eslint-disable jsx-a11y/heading-has-content */
     h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
       <h1 className="mb-4 mt-8 font-heading text-3xl font-bold tracking-tight" {...props} />
     ),
@@ -120,6 +119,7 @@ export function getMDXComponents() {
     h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
       <h3 className="mb-2 mt-5 font-heading text-lg font-semibold" {...props} />
     ),
+    /* eslint-enable jsx-a11y/heading-has-content */
     p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
       <p className="mb-4 text-[15px] leading-[1.8] text-foreground/85" {...props} />
     ),
@@ -154,6 +154,7 @@ export function getMDXComponents() {
       />
     ),
     a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+      // eslint-disable-next-line jsx-a11y/anchor-has-content -- children from MDX via spread
       <a
         className="font-medium text-primary underline decoration-primary/30 underline-offset-4 hover:decoration-primary"
         {...props}

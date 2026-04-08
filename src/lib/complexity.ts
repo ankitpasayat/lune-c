@@ -468,7 +468,7 @@ function getMaxLoopDepth(code: string): number {
   let bm: RegExpExecArray | null;
   while ((bm = bracelessLoopRe.exec(code)) !== null) {
     let consecutiveDepth = 1;
-    let pos = bm.index + bm[0].length;
+    const pos = bm.index + bm[0].length;
     // Look ahead for more braceless loop starts
     const nextLoopRe = /^\s*(?:for|while)\s*\([^)]*\)\s*\n/;
     let remaining = code.substring(pos);

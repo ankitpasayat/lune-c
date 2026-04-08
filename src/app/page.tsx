@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { Button } from "@/components/ui/button";
 import {
   ArrowRight,
   Terminal,
@@ -10,6 +8,8 @@ import {
   Shield,
   Zap,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
 
 const PHASES = [
   {

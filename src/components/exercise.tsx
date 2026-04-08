@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import CodeMirrorEditor from "@/components/code-editor";
 import { Play, Loader2, RotateCcw, Check, X, AlignLeft } from "lucide-react";
+import CodeMirrorEditor from "@/components/code-editor";
 import { Button } from "@/components/ui/button";
 
 interface TestCase {

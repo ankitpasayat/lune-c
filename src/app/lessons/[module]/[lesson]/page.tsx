@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
-import { getModules, getLessonSource } from "@/lib/content";
 import { compileMDX } from "next-mdx-remote/rsc";
-import { getMDXComponents } from "@/components/mdx-components";
 import remarkGfm from "remark-gfm";
 import rehypePrettyCode from "rehype-pretty-code";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { getMDXComponents } from "@/components/mdx-components";
+import { getModules, getLessonSource } from "@/lib/content";
 import { Button } from "@/components/ui/button";
 
 interface PageProps {

@@ -1,8 +1,8 @@
+import { Menu } from "lucide-react";
+import Link from "next/link";
 import { getModules } from "@/lib/content";
 import Sidebar from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Menu } from "lucide-react";
-import Link from "next/link";
 
 export default function LessonsLayout({
   children,
@@ -42,7 +42,9 @@ export default function LessonsLayout({
       <label
         htmlFor="sidebar-toggle"
         className="fixed inset-0 z-30 hidden bg-black/50 peer-checked:block lg:!hidden"
-      />
+      >
+        <span className="sr-only">Close sidebar</span>
+      </label>
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto pt-12 lg:ml-72 lg:pt-0">

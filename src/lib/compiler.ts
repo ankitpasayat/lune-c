@@ -104,7 +104,7 @@ export async function compileAndRun(
       "-v", binPath,
     ], {
       timeout: TIMEOUT_MS,
-      stdin,
+      ...(stdin != null && { stdin }),
     });
     const elapsed = ((performance.now() - start) / 1000).toFixed(3);
     const { programStderr, peakMemoryKB } = splitTimeOutput(run.stderr);

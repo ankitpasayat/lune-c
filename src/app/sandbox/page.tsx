@@ -2,10 +2,10 @@
 
 import { useState, useCallback } from "react";
 import Link from "next/link";
+import { Play, Loader2, RotateCcw, ArrowLeft, Clock, HardDrive, AlignLeft } from "lucide-react";
 import CodeMirrorEditor from "@/components/code-editor";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Play, Loader2, RotateCcw, ArrowLeft, Clock, HardDrive, AlignLeft } from "lucide-react";
 import { estimateComplexity } from "@/lib/complexity";
 
 const DEFAULT_CODE = `#include <stdio.h>

@@ -1,9 +1,9 @@
 import { Clock, HardDrive } from "lucide-react";
 
 interface ComplexityProps {
-  time?: string;   // e.g. "O(n)", "O(n log n)"
-  space?: string;  // e.g. "O(1)", "O(n)"
-  className?: string;
+  time?: string | undefined;   // e.g. "O(n)", "O(n log n)"
+  space?: string | undefined;  // e.g. "O(1)", "O(n)"
+  className?: string | undefined;
 }
 
 export default function Complexity({ time, space, className = "" }: ComplexityProps) {
