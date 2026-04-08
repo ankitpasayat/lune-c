@@ -1,0 +1,340 @@
+---
+title: "Dynamic Memory"
+module: "Pointers and Memory"
+order: 3
+description: "Allocating memory at runtime with malloc, calloc, realloc, and free."
+difficulty: "intermediate"
+---
+
+So far, every array you've declared has had a fixed size decided at compile time:
+`int arr[100]`. But what if you're reading a file and don't know how many lines it
+has? Or building a list that keeps growing? You need memory allocation at runtime.
+
+This is what the **heap** is for.
+
+## Stack vs Heap: Two Kinds of Memory
+
+Your program uses two main regions for data:
+
+**The stack** is like a stack of trays in a cafeteria. When you call a function, a new
+tray (stack frame) goes on top with space for that function's local variables. When the
+function returns, the tray is removed — all its variables vanish automatically. Fast,
+but two limitations: the size is fixed at compile time, and it's relatively small
+(typically 1-8 MB).
+
+**The heap** is like a warehouse. You request a chunk of any size with `malloc`, use it
+for as long as you need, then return it with `free`. No automatic cleanup — you're the
+warehouse manager. If you forget to return a chunk, it stays reserved forever (a
+*memory leak*). If you try to use a chunk after returning it, you're grabbing something
+that may have been given to someone else (a *use-after-free* bug).
+
+Why two regions? Because they serve different needs. The stack handles the common case
+(small, short-lived data) with zero overhead. The heap handles the hard case
+(unknown-size, long-lived data) with manual control.
+
+## malloc — Memory Allocation
+
+`malloc(size)` requests `size` bytes from the heap and returns a pointer to the start:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int n = 5;
+
+    // Allocate space for 5 integers
+    int *arr = malloc(n * sizeof(int));
+
+    if (arr == NULL) {
+        printf("Memory allocation failed!\\n");
+        return 1;
+    }
+
+    // Use it like a normal array
+    for (int i = 0; i < n; i++) {
+        arr[i] = (i + 1) * 10;
+    }
+
+    for (int i = 0; i < n; i++) {
+        printf("arr[%d] = %d\\n", i, arr[i]);
+    }
+
+    // Free when done
+    free(arr);
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+What happens inside `malloc`? It asks the operating system (or its own internal free
+list) for a contiguous block of the requested size. The OS returns a chunk of virtual
+memory, and `malloc` gives you a pointer to it. The memory contains *garbage* — whatever
+bytes were there before. It's your job to initialize it.
+
+Why `sizeof(int)` and not just `4`? Because `int` isn't always 4 bytes on every
+platform. `sizeof` gives the correct size on whatever machine you're compiling for.
+
+## calloc — Cleared Allocation
+
+`calloc(count, size)` does the same as `malloc` but **zeros all the bytes**:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int n = 5;
+
+    // calloc: allocate and zero-initialize
+    int *arr = calloc(n, sizeof(int));
+    if (arr == NULL) return 1;
+
+    // All values are guaranteed to be 0
+    for (int i = 0; i < n; i++) {
+        printf("arr[%d] = %d\\n", i, arr[i]);  // All zeros
+    }
+
+    free(arr);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Use `calloc` when you need a clean slate (arrays of counters, boolean flags, zeroed
+buffers). Use `malloc` when you'll write every element anyway — it's slightly faster
+since it skips the zeroing step.
+
+## realloc — Resize Allocation
+
+What if you allocated space for 100 elements but now need 200? `realloc` grows (or
+shrinks) an existing allocation:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int capacity = 3;
+    int *arr = malloc(capacity * sizeof(int));
+    if (arr == NULL) return 1;
+
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+
+    // Need more space — double the capacity
+    capacity *= 2;
+    int *temp = realloc(arr, capacity * sizeof(int));
+    if (temp == NULL) {
+        free(arr);  // Original still valid if realloc fails
+        return 1;
+    }
+    arr = temp;
+
+    arr[3] = 40;
+    arr[4] = 50;
+    arr[5] = 60;
+
+    for (int i = 0; i < 6; i++) {
+        printf("arr[%d] = %d\\n", i, arr[i]);
+    }
+
+    free(arr);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Under the hood, `realloc` tries to extend the block in place. If there's room after the
+current block, it just adjusts the bookkeeping. If not, it allocates a new block,
+copies everything over, and frees the old one. Either way, your existing data is
+preserved.
+
+<Callout type="warning">
+Never write `arr = realloc(arr, new_size)`. If `realloc` fails, it returns NULL but
+does NOT free the original. Assigning NULL to `arr` loses your only handle to that
+memory — a guaranteed leak. Always use a temporary variable.
+</Callout>
+
+## free — Releasing Memory
+
+Every `malloc`/`calloc`/`realloc` must have a matching `free`. Think of it as a
+contract: you borrowed memory from the OS, and `free` returns it.
+
+```c
+int *p = malloc(100 * sizeof(int));
+// ... use p ...
+free(p);     // Release the memory
+p = NULL;    // Good practice: prevent use-after-free
+```
+
+Setting the pointer to NULL after freeing is a safety habit. Dereferencing NULL
+causes a clean crash (segfault), while dereferencing freed memory causes
+*unpredictable* corruption. Clean crashes are much easier to debug.
+
+## The Ownership Question
+
+Dynamic memory introduces a problem that doesn't exist with stack variables: **who
+is responsible for freeing this memory?**
+
+If `create_array()` calls `malloc` and returns the pointer, the *caller* must call
+`free`. If the caller passes that pointer to three other functions, which one frees
+it? If no one does, it's a leak. If two of them do, it's a double-free crash.
+
+This is the **ownership** problem. C gives you no language-level tools to manage it —
+you must establish conventions. The simplest: whoever `malloc`s is responsible for
+`free`ing. When you can't follow that (like factory functions), document it clearly:
+"Caller must free the returned pointer."
+
+## A Dynamic Array Example
+
+Putting it together — a growable array that doubles its capacity when full:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int capacity = 4;
+    int size = 0;
+    int *arr = malloc(capacity * sizeof(int));
+    if (arr == NULL) return 1;
+
+    // Read numbers until we see -1
+    int value;
+    scanf("%d", &value);
+    while (value != -1) {
+        // Grow if needed
+        if (size == capacity) {
+            capacity *= 2;
+            int *temp = realloc(arr, capacity * sizeof(int));
+            if (temp == NULL) { free(arr); return 1; }
+            arr = temp;
+        }
+
+        arr[size++] = value;
+        scanf("%d", &value);
+    }
+
+    printf("Read %d values:\\n", size);
+    for (int i = 0; i < size; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    free(arr);
+    return 0;
+}
+`} stdin="10 20 30 40 50 60 70 80 -1" time="O(n)" space="O(n)" />
+
+Why double the capacity instead of adding 1? Because `realloc` may copy the entire
+array to a new location. If you grow by 1 each time and add n elements, that's
+1 + 2 + 3 + ... + n = O(n^2) copies total. Doubling means at most O(n) total copies
+across all reallocs — this is called **amortized O(1)** per insertion.
+
+## Exercise: Dynamic Sum
+
+<Exercise
+  title="Sum of dynamically-sized array"
+  description="Read N, then N integers. Use malloc to allocate an array of exactly N ints. Print the sum."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Allocate array with malloc
+
+    // Read values, compute sum, print it
+
+    // Free memory
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n10 20 30 40", expected_stdout: "100\n" },
+    { stdin: "3\n-1 0 1", expected_stdout: "0\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "int *arr = malloc(n * sizeof(int)); then loop to read and sum.",
+    "Don't forget to free(arr) at the end."
+  ]}
+/>
+
+## Exercise: Duplicate Array
+
+<Exercise
+  title="Allocate a copy"
+  description="Read N integers into a stack array. Write a function int *duplicate(int *src, int n) that allocates a new array and copies all elements. Print the copy, then free it."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int *duplicate(int *src, int n) {
+    // Allocate and copy
+    return NULL; // Fix this
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int original[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &original[i]);
+    }
+
+    int *copy = duplicate(original, n);
+    if (copy == NULL) return 1;
+
+    for (int i = 0; i < n; i++) {
+        printf("%d", copy[i]);
+        if (i < n - 1) printf(" ");
+    }
+    printf("\\n");
+
+    free(copy);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "10 20 30\n" }
+  ]}
+  hints={[
+    "Allocate with malloc(n * sizeof(int)), then copy in a loop.",
+    "int *copy = malloc(n * sizeof(int)); for (int i = 0; i < n; i++) copy[i] = src[i]; return copy;"
+  ]}
+/>
+
+## Exercise: Concat Two Arrays
+
+<Exercise
+  title="Merge two arrays"
+  description="Read two arrays (each preceded by their size). Create a new dynamically allocated array that contains all elements of the first followed by all elements of the second. Print the combined array."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int n1, n2;
+    scanf("%d", &n1);
+    int a[100];
+    for (int i = 0; i < n1; i++) scanf("%d", &a[i]);
+
+    scanf("%d", &n2);
+    int b[100];
+    for (int i = 0; i < n2; i++) scanf("%d", &b[i]);
+
+    // Allocate combined array and fill it
+
+    // Print all elements and free
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 2 3\n2\n4 5", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "2\n10 20\n3\n30 40 50", expected_stdout: "10 20 30 40 50\n" }
+  ]}
+  hints={[
+    "Allocate (n1 + n2) * sizeof(int) bytes.",
+    "Copy a[0..n1-1] to result[0..n1-1], then b[0..n2-1] to result[n1..n1+n2-1]."
+  ]}
+/>

@@ -1,0 +1,395 @@
+---
+title: "Tries & String Structures"
+module: "Advanced Data Structures"
+order: 3
+description: "Trie data structure for prefix matching, autocomplete, and efficient string operations."
+difficulty: "advanced"
+---
+
+Hash tables are great — O(1) average lookup, insertion, deletion. So why would you ever need another data structure for strings? Here's a question a hash table *cannot* efficiently answer: "Give me all words that start with 'pre'."
+
+A hash table can tell you whether "prefix" exists, but to find all words starting with "pre", you'd have to check every single key in the table. That's O(n), where n is the total number of stored words. A **trie** answers this in O(k + m), where k is the prefix length and m is the number of matching results. For autocomplete in a dictionary with a million words, that's the difference between scanning a million entries and walking 3 nodes.
+
+## What Is a Trie?
+
+A **trie** (from "re**trie**val," though it's pronounced "try" to avoid confusion with "tree") is a tree where each node represents a single character, and paths from root to nodes spell out strings. Shared prefixes share the same path in the tree.
+
+```
+             root
+           / | \
+          c  d  t
+          |  |  |
+          a  o  h
+         / \  |  |
+        r   t  g  e
+        |       
+        s       
+        
+Stores: "car", "cars", "cat", "dog", "the"
+```
+
+Notice how "car" and "cat" share the path `c -> a`, and "car" and "cars" share the path `c -> a -> r`. This prefix sharing is the trie's superpower. You don't store each word independently — common prefixes are stored only once.
+
+## Why O(key length), Not O(n)
+
+Here's the key insight about trie performance: operations depend on the **length of the key**, not the **number of keys stored**. Inserting "elephant" takes 8 steps whether your trie has 10 words or 10 million words. This is a fundamentally different performance model than a hash table, where hash collisions can degrade performance as the table fills up.
+
+For search, insert, and delete, the time complexity is O(L), where L is the length of the word. That's it. No hash function computation, no collision resolution, no resizing. Just walk the tree one character at a time.
+
+## The Space Tradeoff
+
+The catch? Memory. Each trie node in a basic implementation has an array of 26 pointers (for lowercase English letters). Most of those pointers are NULL. A node storing 3 children wastes 23 pointer slots. Multiply by thousands of nodes and the overhead adds up.
+
+The space is O(N * L * ALPHABET_SIZE), where N is the number of words, L is the average length, and ALPHABET_SIZE is 26 for lowercase English. This is often much more than a hash table would use.
+
+There are ways to mitigate this — using hash maps instead of arrays at each node, or using compressed tries (Patricia/radix tries) that merge chains of single-child nodes into one node. We'll touch on compressed tries at the end.
+
+## Trie Implementation
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ALPHABET_SIZE 26
+
+typedef struct TrieNode {
+    struct TrieNode *children[ALPHABET_SIZE];
+    int is_end;    // Is this the end of a word?
+    int count;     // How many words pass through this node
+} TrieNode;
+
+TrieNode *create_node(void) {
+    TrieNode *node = calloc(1, sizeof(TrieNode));
+    return node;
+}
+
+void insert(TrieNode *root, const char *word) {
+    TrieNode *curr = root;
+    for (int i = 0; word[i]; i++) {
+        int idx = word[i] - 'a';
+        if (!curr->children[idx]) {
+            curr->children[idx] = create_node();
+        }
+        curr = curr->children[idx];
+        curr->count++;
+    }
+    curr->is_end = 1;
+}
+
+int search(TrieNode *root, const char *word) {
+    TrieNode *curr = root;
+    for (int i = 0; word[i]; i++) {
+        int idx = word[i] - 'a';
+        if (!curr->children[idx]) return 0;
+        curr = curr->children[idx];
+    }
+    return curr->is_end;
+}
+
+int starts_with(TrieNode *root, const char *prefix) {
+    TrieNode *curr = root;
+    for (int i = 0; prefix[i]; i++) {
+        int idx = prefix[i] - 'a';
+        if (!curr->children[idx]) return 0;
+        curr = curr->children[idx];
+    }
+    return curr->count;
+}
+
+void free_trie(TrieNode *node) {
+    if (!node) return;
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        free_trie(node->children[i]);
+    }
+    free(node);
+}
+
+int main() {
+    TrieNode *root = create_node();
+
+    insert(root, "cat");
+    insert(root, "car");
+    insert(root, "card");
+    insert(root, "care");
+    insert(root, "dog");
+
+    printf("Search results:\\n");
+    printf("  'cat':  %s\\n", search(root, "cat") ? "found" : "not found");
+    printf("  'car':  %s\\n", search(root, "car") ? "found" : "not found");
+    printf("  'ca':   %s\\n", search(root, "ca") ? "found" : "not found");
+    printf("  'dog':  %s\\n", search(root, "dog") ? "found" : "not found");
+
+    printf("\\nPrefix counts:\\n");
+    printf("  'ca':  %d words\\n", starts_with(root, "ca"));
+    printf("  'car': %d words\\n", starts_with(root, "car"));
+    printf("  'do':  %d words\\n", starts_with(root, "do"));
+    printf("  'x':   %d words\\n", starts_with(root, "x"));
+
+    free_trie(root);
+    return 0;
+}
+`} time="O(L) per operation" space="O(N × L)" />
+
+<Complexity time="O(L) per search/insert (L = word length)" space="O(N × L × 26)" />
+
+## Autocomplete: The Killer Application
+
+Autocomplete is where tries truly shine. When a user types "he", you need to find all words starting with "he" — and you need to do it fast, on every keystroke. With a trie, you walk to the node for "he" (2 steps, regardless of dictionary size), then collect all words in that subtree.
+
+A hash table would need to check every single word in the dictionary for the prefix match. A sorted array with binary search can find the first matching word quickly, but collecting all matches still requires scanning. A trie gives you direct access to exactly the right subtree.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ALPHABET_SIZE 26
+
+typedef struct TrieNode {
+    struct TrieNode *children[ALPHABET_SIZE];
+    int is_end;
+} TrieNode;
+
+TrieNode *create_node(void) { return calloc(1, sizeof(TrieNode)); }
+
+void insert(TrieNode *root, const char *word) {
+    TrieNode *curr = root;
+    for (int i = 0; word[i]; i++) {
+        int idx = word[i] - 'a';
+        if (!curr->children[idx]) curr->children[idx] = create_node();
+        curr = curr->children[idx];
+    }
+    curr->is_end = 1;
+}
+
+void find_all_words(TrieNode *node, char *prefix, int depth) {
+    if (!node) return;
+    if (node->is_end) {
+        prefix[depth] = '\\0';
+        printf("  %s\\n", prefix);
+    }
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        if (node->children[i]) {
+            prefix[depth] = 'a' + i;
+            find_all_words(node->children[i], prefix, depth + 1);
+        }
+    }
+}
+
+void autocomplete(TrieNode *root, const char *prefix) {
+    TrieNode *curr = root;
+    for (int i = 0; prefix[i]; i++) {
+        int idx = prefix[i] - 'a';
+        if (!curr->children[idx]) {
+            printf("No suggestions for '%s'\\n", prefix);
+            return;
+        }
+        curr = curr->children[idx];
+    }
+
+    printf("Suggestions for '%s':\\n", prefix);
+    char buffer[100];
+    strcpy(buffer, prefix);
+    int len = strlen(prefix);
+
+    if (curr->is_end) printf("  %s\\n", prefix);
+    for (int i = 0; i < ALPHABET_SIZE; i++) {
+        if (curr->children[i]) {
+            buffer[len] = 'a' + i;
+            find_all_words(curr->children[i], buffer, len + 1);
+        }
+    }
+}
+
+void free_trie(TrieNode *n) {
+    if (!n) return;
+    for (int i = 0; i < 26; i++) free_trie(n->children[i]);
+    free(n);
+}
+
+int main() {
+    TrieNode *root = create_node();
+
+    const char *words[] = {
+        "hello", "help", "heap", "hero", "her", "heat"
+    };
+    for (int i = 0; i < 6; i++) insert(root, words[i]);
+
+    autocomplete(root, "he");
+    printf("\\n");
+    autocomplete(root, "hel");
+    printf("\\n");
+    autocomplete(root, "xyz");
+
+    free_trie(root);
+    return 0;
+}
+`} time="O(N)" space="O(N × L)" />
+
+## Real-World Uses of Tries
+
+Tries aren't just an academic exercise. They power systems you use every day:
+
+- **Autocomplete and search suggestions**: Google's search bar, your phone's keyboard, IDE code completion — all fundamentally trie-like operations. Type a prefix, get suggestions instantly.
+- **Spell checkers**: store the dictionary in a trie, then check if each typed word reaches an `is_end` node. For suggestions, explore nearby nodes (edit distance).
+- **IP routing**: routers use a variant of tries to match IP addresses against forwarding tables. The longest prefix match determines where to send a packet. This is done billions of times per second in backbone routers.
+- **T9 predictive text**: on old phone keypads, pressing 2-3-2 could mean "aba", "abc", etc. A trie indexed by digit sequences instantly narrows down candidate words.
+
+<Callout type="info">
+**Compressed tries (Patricia/Radix tries)**: in a basic trie, long chains of single-child nodes waste space. The word "internationalization" creates 20 nodes, most with exactly one child. A compressed trie merges these chains into single nodes that store substrings instead of individual characters. This dramatically reduces space while preserving O(L) lookup time. If you're building a production autocomplete system, you'd likely use a compressed trie.
+</Callout>
+
+## Exercise: Word Search
+
+<Exercise
+  title="Trie word lookup"
+  description="Read W words to build a dictionary. Then read Q queries. For each query, print 'found' if the exact word exists, 'prefix' if it's a prefix of some word but not a complete word, or 'not found' otherwise."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ALPHA 26
+
+typedef struct Node {
+    struct Node *ch[ALPHA];
+    int end;
+} Node;
+
+Node *make(void) { return calloc(1, sizeof(Node)); }
+
+void insert(Node *r, const char *w) {
+    for (int i = 0; w[i]; i++) {
+        int c = w[i] - 'a';
+        if (!r->ch[c]) r->ch[c] = make();
+        r = r->ch[c];
+    }
+    r->end = 1;
+}
+
+// Returns: 0=not found, 1=prefix only, 2=exact match
+int query(Node *r, const char *w) {
+    for (int i = 0; w[i]; i++) {
+        int c = w[i] - 'a';
+        if (!r->ch[c]) return 0;
+        r = r->ch[c];
+    }
+    return r->end ? 2 : 1;
+}
+
+void cleanup(Node *n) {
+    if (!n) return;
+    for (int i = 0; i < ALPHA; i++) cleanup(n->ch[i]);
+    free(n);
+}
+
+int main() {
+    int w, q;
+    scanf("%d %d", &w, &q);
+
+    Node *root = make();
+    for (int i = 0; i < w; i++) {
+        char word[64];
+        scanf("%s", word);
+        insert(root, word);
+    }
+
+    for (int i = 0; i < q; i++) {
+        char word[64];
+        scanf("%s", word);
+        int result = query(root, word);
+        if (result == 2) printf("found\\n");
+        else if (result == 1) printf("prefix\\n");
+        else printf("not found\\n");
+    }
+
+    cleanup(root);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 4\napple app ban\napp apple ap xyz", expected_stdout: "found\nfound\nprefix\nnot found\n" },
+    { stdin: "2 3\nhello help\nhel hello world", expected_stdout: "prefix\nfound\nnot found\n" }
+  ]}
+  hints={[
+    "Traverse the trie character by character.",
+    "If you can't continue (no child), it's 'not found'.",
+    "If you reach the end but is_end is false, it's a 'prefix'."
+  ]}
+/>
+
+## Exercise: Prefix Count
+
+<Exercise
+  title="Count words with prefix"
+  description="Read W words, then Q prefix queries. For each query, print how many words in the dictionary start with that prefix."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define ALPHA 26
+
+typedef struct Node {
+    struct Node *ch[ALPHA];
+    int count;
+} Node;
+
+Node *make(void) { return calloc(1, sizeof(Node)); }
+
+void insert(Node *r, const char *w) {
+    for (int i = 0; w[i]; i++) {
+        int c = w[i] - 'a';
+        if (!r->ch[c]) r->ch[c] = make();
+        r = r->ch[c];
+        r->count++;
+    }
+}
+
+int prefix_count(Node *r, const char *p) {
+    for (int i = 0; p[i]; i++) {
+        int c = p[i] - 'a';
+        if (!r->ch[c]) return 0;
+        r = r->ch[c];
+    }
+    return r->count;
+}
+
+void cleanup(Node *n) {
+    if (!n) return;
+    for (int i = 0; i < ALPHA; i++) cleanup(n->ch[i]);
+    free(n);
+}
+
+int main() {
+    int w, q;
+    scanf("%d %d", &w, &q);
+
+    Node *root = make();
+    for (int i = 0; i < w; i++) {
+        char word[64];
+        scanf("%s", word);
+        insert(root, word);
+    }
+
+    for (int i = 0; i < q; i++) {
+        char prefix[64];
+        scanf("%s", prefix);
+        printf("%d\\n", prefix_count(root, prefix));
+    }
+
+    cleanup(root);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 3\napple app application ban banana\nap b xyz", expected_stdout: "3\n2\n0\n" },
+    { stdin: "3 2\naa ab ac\na aa", expected_stdout: "3\n1\n" }
+  ]}
+  hints={[
+    "Increment a count at each node during insertion.",
+    "The count at a node tells how many words pass through it.",
+    "Follow the prefix path and return the count at the last node."
+  ]}
+/>
+
+## What's Next
+
+The final advanced structure: **disjoint sets (Union-Find)** — for efficiently tracking connected components.

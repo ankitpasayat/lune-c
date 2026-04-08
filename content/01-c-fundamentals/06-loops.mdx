@@ -1,0 +1,196 @@
+---
+title: "Loops"
+module: "C Fundamentals"
+order: 6
+description: "Repeating actions with for, while, and do-while loops, plus break and continue."
+difficulty: "beginner"
+---
+
+Loops let you execute code repeatedly. C has three loop constructs, each suited to different patterns.
+
+## The for Loop
+
+Use `for` when you know how many times to repeat:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    for (int i = 0; i < 5; i++) {\n        printf("Iteration %d\\n", i);\n    }\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+The `for` statement has three parts separated by semicolons:
+
+```c
+for (initialization; condition; update) {
+    // body
+}
+```
+
+1. **Initialization** — runs once before the loop starts (`int i = 0`)
+2. **Condition** — checked before each iteration; loop stops when false (`i < 5`)
+3. **Update** — runs after each iteration (`i++`)
+
+## The while Loop
+
+Use `while` when you don't know the count in advance:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int n = 12345;\n    int digits = 0;\n    \n    while (n > 0) {\n        n /= 10;    // Remove last digit\n        digits++;\n    }\n    \n    printf("Number of digits: %d\\n", digits);\n    \n    return 0;\n}\n`} time="O(log n)" space="O(1)" />
+
+The `while` loop checks the condition **before** each iteration. If the condition is false from the start, the body never executes.
+
+## The do-while Loop
+
+Guarantees the body runs **at least once**:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    \n    do {\n        printf("Enter a positive number: ");\n        scanf("%d", &n);\n    } while (n <= 0);\n    \n    printf("You entered: %d\\n", n);\n    \n    return 0;\n}\n`} stdin="5" time="O(1)" space="O(1)" />
+
+<Callout type="info">
+`do-while` is less common than `for` and `while`, but it's perfect for input validation: you want to read at least once, then check if the input is valid.
+</Callout>
+
+## break and continue
+
+Two keywords control loop execution:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // break: exit the loop entirely\n    printf("break example:\\n");\n    for (int i = 0; i < 10; i++) {\n        if (i == 5) break;\n        printf("%d ", i);\n    }\n    printf("\\n\\n");\n    \n    // continue: skip to the next iteration\n    printf("continue example:\\n");\n    for (int i = 0; i < 10; i++) {\n        if (i % 3 == 0) continue;\n        printf("%d ", i);\n    }\n    printf("\\n");\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+- **`break`** — immediately exits the innermost loop
+- **`continue`** — skips the rest of the current iteration and jumps to the next one
+
+## Nested Loops
+
+Loops can be placed inside other loops. The inner loop runs completely for each iteration of the outer loop:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // Multiplication table (1-5)\n    for (int i = 1; i <= 5; i++) {\n        for (int j = 1; j <= 5; j++) {\n            printf("%4d", i * j);\n        }\n        printf("\\n");\n    }\n    \n    return 0;\n}\n`} time="O(n²)" space="O(1)" />
+
+<Callout type="info">
+`%4d` is a format specifier that prints an integer right-aligned in a field of 4 characters wide. This keeps the columns aligned.
+</Callout>
+
+## Infinite Loops
+
+Sometimes you want a loop that runs forever (until explicitly stopped):
+
+```c
+while (1) {
+    // runs forever
+    // use break to exit
+}
+
+for (;;) {
+    // also runs forever — all three parts of for are optional
+}
+```
+
+## Common Patterns
+
+### Counting up
+```c
+for (int i = 0; i < n; i++) { ... }
+```
+
+### Counting down
+```c
+for (int i = n - 1; i >= 0; i--) { ... }
+```
+
+### Reading until end of input
+```c
+int n;
+while (scanf("%d", &n) == 1) { ... }
+```
+
+### Accumulating a sum
+```c
+int sum = 0;
+for (int i = 1; i <= n; i++) {
+    sum += i;
+}
+```
+
+## Exercise: Sum of N Numbers
+
+<Exercise
+  title="Sum from 1 to N"
+  description="Read an integer N from stdin. Print the sum of all integers from 1 to N (inclusive)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Calculate and print sum from 1 to n\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5", expected_stdout: "15\n" },
+    { stdin: "10", expected_stdout: "55\n" },
+    { stdin: "1", expected_stdout: "1\n" },
+    { stdin: "100", expected_stdout: "5050\n" }
+  ]}
+  hints={[
+    "Use a for loop: for (int i = 1; i <= n; i++) and accumulate into a sum variable.",
+    "Initialize sum to 0 before the loop."
+  ]}
+/>
+
+## Exercise: Factorial
+
+<Exercise
+  title="Factorial"
+  description="Read an integer N (0 ≤ N ≤ 12) from stdin. Print N! (N factorial). Remember: 0! = 1."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Calculate and print n!\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "0", expected_stdout: "1\n" },
+    { stdin: "1", expected_stdout: "1\n" },
+    { stdin: "5", expected_stdout: "120\n" },
+    { stdin: "10", expected_stdout: "3628800\n" }
+  ]}
+  hints={[
+    "Start with result = 1 and multiply by each number from 1 to n.",
+    "for (int i = 1; i <= n; i++) result *= i;"
+  ]}
+/>
+
+## Exercise: Reverse a Number
+
+<Exercise
+  title="Reverse digits"
+  description="Read a positive integer from stdin. Print its digits in reverse. For example, 12345 becomes 54321."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Reverse the digits and print the result\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "12345", expected_stdout: "54321\n" },
+    { stdin: "100", expected_stdout: "1\n" },
+    { stdin: "7", expected_stdout: "7\n" },
+    { stdin: "9876", expected_stdout: "6789\n" }
+  ]}
+  hints={[
+    "Use n % 10 to get the last digit, and n /= 10 to remove it.",
+    "Build the reversed number: reversed = reversed * 10 + (n % 10)"
+  ]}
+/>
+
+## Exercise: Right Triangle Pattern
+
+<Exercise
+  title="Star triangle"
+  description="Read an integer N from stdin. Print a right triangle of * characters with N rows. Row 1 has 1 star, row 2 has 2 stars, etc."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Print a right triangle with n rows\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3", expected_stdout: "*\n**\n***\n" },
+    { stdin: "5", expected_stdout: "*\n**\n***\n****\n*****\n" },
+    { stdin: "1", expected_stdout: "*\n" }
+  ]}
+  hints={[
+    "Use nested loops: outer loop for rows, inner loop for stars in each row.",
+    "for (int i = 1; i <= n; i++) { for (int j = 0; j < i; j++) printf(\"*\"); printf(\"\\n\"); }"
+  ]}
+/>
+
+## Exercise: FizzBuzz
+
+<Exercise
+  title="FizzBuzz"
+  description="Print numbers from 1 to N (read from stdin), but: print 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, and 'FizzBuzz' for multiples of both. Each on its own line."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // FizzBuzz from 1 to n\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5", expected_stdout: "1\n2\nFizz\n4\nBuzz\n" },
+    { stdin: "15", expected_stdout: "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n" }
+  ]}
+  hints={[
+    "Check divisibility by both 3 and 5 first (the FizzBuzz case).",
+    "if (i % 3 == 0 && i % 5 == 0) ... else if (i % 3 == 0) ... else if (i % 5 == 0) ... else ..."
+  ]}
+/>
+
+## What's Next
+
+You can now write programs with loops. The last piece of the fundamentals puzzle is **functions** — breaking code into reusable, named pieces.

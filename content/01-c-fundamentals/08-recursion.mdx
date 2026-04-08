@@ -1,0 +1,293 @@
+---
+title: "Recursion"
+module: "C Fundamentals"
+order: 8
+description: "Understand how functions can call themselves to solve problems by breaking them into smaller pieces."
+difficulty: "beginner"
+---
+
+A **recursive function** calls itself. That sounds like an infinite loop — and it
+would be, if you didn't tell it when to stop. The trick is that each call works on
+a *slightly smaller* version of the problem until it reaches something trivially
+simple.
+
+## Your First Recursive Function
+
+<Editor defaultCode={`#include <stdio.h>
+
+void countdown(int n) {
+    if (n <= 0) {
+        printf("Go!\\n");
+        return;         // Base case: stop recursing
+    }
+    printf("%d...\\n", n);
+    countdown(n - 1);   // Recursive case: smaller problem
+}
+
+int main() {
+    countdown(5);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Two things make this work:
+
+1. **Base case** (`n <= 0`) — we stop and return, breaking the chain
+2. **Recursive case** — we call ourselves with `n - 1`, a *strictly smaller* input
+
+If you forget the base case, or if the input doesn't shrink toward it, the function
+calls itself forever until the stack overflows and your program crashes.
+
+## Why Does This Eat Memory?
+
+Every time you call a function — any function — the machine allocates a **stack frame**:
+a chunk of memory for that call's local variables, parameters, and return address. In
+`countdown(5)`, these frames pile up:
+
+```
+countdown(0) ← currently running
+countdown(1) ← waiting to resume after countdown(0) returns
+countdown(2) ← waiting
+countdown(3) ← waiting
+countdown(4) ← waiting
+countdown(5) ← waiting
+main()       ← waiting
+```
+
+Six frames on the stack for counting down from 5. `countdown(10000)` would need 10,001
+frames. This is why recursive functions use O(n) space even if they don't allocate
+any arrays — the call stack itself is the cost.
+
+You can actually watch the stack wind and unwind:
+
+<Editor defaultCode={`#include <stdio.h>
+
+void show_stack(int n) {
+    printf("Entering show_stack(%d)\\n", n);
+    if (n <= 0) {
+        printf("  Base case hit — now unwinding!\\n");
+        return;
+    }
+    show_stack(n - 1);
+    printf("Returning from show_stack(%d)\\n", n);
+}
+
+int main() {
+    show_stack(4);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+The "Returning" messages print in *reverse* order. That's the stack unwinding — each
+paused call resumes where it left off, outermost last.
+
+## Classic Example: Factorial
+
+The factorial `n!` has a natural recursive definition: `n! = n × (n-1)!`, with `0! = 1`.
+
+But before you code that, think about *why* it works. To compute `5!`, you need
+`5 × 4!`. To compute `4!`, you need `4 × 3!`. Eventually you reach `0! = 1`, and
+the multiplication chain collapses back:
+
+```
+factorial(5)
+= 5 × factorial(4)
+= 5 × 4 × factorial(3)
+= 5 × 4 × 3 × factorial(2)
+= 5 × 4 × 3 × 2 × factorial(1)
+= 5 × 4 × 3 × 2 × 1
+= 120
+```
+
+<Editor defaultCode={`#include <stdio.h>
+
+int factorial(int n) {
+    if (n <= 1) return 1;        // Base case
+    return n * factorial(n - 1); // n * (smaller problem)
+}
+
+int main() {
+    for (int i = 0; i <= 10; i++) {
+        printf("%2d! = %d\\n", i, factorial(i));
+    }
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+## Exercise: Sum of First N Numbers
+
+<Exercise
+  title="Recursive sum"
+  description="Write a recursive function that computes the sum 1 + 2 + ... + n. Return 0 for n=0."
+  starterCode={`#include <stdio.h>
+
+int sum(int n) {
+    // Base case: sum(0) = 0
+    // Recursive case: sum(n) = n + sum(n-1)
+    return 0; // fix this
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    printf("%d\\n", sum(n));
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5", expected_stdout: "15\n" },
+    { stdin: "10", expected_stdout: "55\n" },
+    { stdin: "0", expected_stdout: "0\n" },
+    { stdin: "1", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "The base case is when n is 0 — return 0.",
+    "For the recursive case, return n + sum(n - 1)."
+  ]}
+/>
+
+## Fibonacci: Where Recursion Gets Dangerous
+
+Each Fibonacci number is the sum of the two before it: `0, 1, 1, 2, 3, 5, 8, 13, 21, ...`
+
+<Editor defaultCode={`#include <stdio.h>
+
+int fib(int n) {
+    if (n <= 0) return 0;
+    if (n == 1) return 1;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main() {
+    printf("Fibonacci sequence:\\n");
+    for (int i = 0; i < 15; i++) {
+        printf("fib(%2d) = %d\\n", i, fib(i));
+    }
+    return 0;
+}
+`} time="O(2^n)" space="O(n)" />
+
+This works, but notice the time complexity: $O(2^n)$. Try changing 15 to 40 — it gets
+painfully slow. Why?
+
+Because `fib(5)` calls `fib(4)` and `fib(3)`. But `fib(4)` *also* calls `fib(3)`.
+That `fib(3)` computation is duplicated. And `fib(3)` calls `fib(2)` which is duplicated
+even more. The same subproblems are recomputed over and over, exponentially.
+
+<Callout type="warning">
+This recursive Fibonacci has $O(2^n)$ time complexity. `fib(40)` makes over 300 million
+function calls, even though there are only 41 unique subproblems. We'll learn how to
+fix this catastrophic waste in the **Dynamic Programming** module — saving the result
+of each subproblem so it's computed only once, reducing the time to O(n).
+</Callout>
+
+## Exercise: Power of Two
+
+<Exercise
+  title="Recursive power check"
+  description="Write a recursive function that checks if a positive integer is a power of 2. A number is a power of 2 if it's 1, or if it's even and n/2 is also a power of 2. Print 'true' or 'false'."
+  starterCode={`#include <stdio.h>
+
+int is_power_of_two(int n) {
+    // Base cases: n == 1 is a power of 2, n <= 0 is not
+    // Recursive case: n is even AND n/2 is a power of 2
+    return 0; // fix this
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    printf("%s\\n", is_power_of_two(n) ? "true" : "false");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1", expected_stdout: "true\n" },
+    { stdin: "16", expected_stdout: "true\n" },
+    { stdin: "64", expected_stdout: "true\n" },
+    { stdin: "12", expected_stdout: "false\n" },
+    { stdin: "0", expected_stdout: "false\n" }
+  ]}
+  hints={[
+    "Base case 1: if n == 1, return 1 (it's a power of 2).",
+    "Base case 2: if n <= 0 or n is odd (n % 2 != 0), return 0.",
+    "Recursive case: return is_power_of_two(n / 2)."
+  ]}
+/>
+
+## Exercise: Reverse a String
+
+<Exercise
+  title="Recursive string reversal"
+  description="Write a recursive function that reverses a string in-place. Swap the first and last characters, then recurse on the middle."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+void reverse(char *str, int left, int right) {
+    // Base case: left >= right, nothing to do
+    // Swap str[left] and str[right], then recurse inward
+}
+
+int main() {
+    char str[100];
+    scanf("%s", str);
+    reverse(str, 0, strlen(str) - 1);
+    printf("%s\\n", str);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "olleh\n" },
+    { stdin: "abcdef", expected_stdout: "fedcba\n" },
+    { stdin: "a", expected_stdout: "a\n" }
+  ]}
+  hints={[
+    "Base case: if left >= right, return (the string is fully reversed).",
+    "Swap: char tmp = str[left]; str[left] = str[right]; str[right] = tmp;",
+    "Recurse: reverse(str, left + 1, right - 1)."
+  ]}
+/>
+
+## Recursion vs. Iteration
+
+Any recursive solution can be rewritten as a loop. So when should you use which?
+
+**Use recursion when:**
+- The problem has a natural tree-like structure (divide-and-conquer, tree traversals)
+- The recursive code is dramatically clearer than the loop version
+- The recursion depth is small and bounded
+
+**Use iteration when:**
+- Performance matters (no function call overhead)
+- The recursion depth could be very large (stack overflow risk)
+- The problem is naturally sequential (process one element at a time)
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Recursive: elegant but uses O(n) stack space
+int sum_recursive(int n) {
+    if (n <= 0) return 0;
+    return n + sum_recursive(n - 1);
+}
+
+// Iterative: same result, O(1) space
+int sum_iterative(int n) {
+    int total = 0;
+    for (int i = 1; i <= n; i++) {
+        total += i;
+    }
+    return total;
+}
+
+int main() {
+    int n = 100;
+    printf("Recursive: %d\\n", sum_recursive(n));
+    printf("Iterative: %d\\n", sum_iterative(n));
+    printf("Formula:   %d\\n", n * (n + 1) / 2);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+All three give the same answer. The formula is O(1) — but you can't always find one.
+Recursion's real power shows up when the problem branches: subsets, permutations,
+trees, divide-and-conquer. We'll explore these in the **Recursion Deep Dive** module.

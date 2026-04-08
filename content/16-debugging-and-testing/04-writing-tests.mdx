@@ -1,0 +1,489 @@
+---
+title: "Writing Tests"
+module: "Debugging & Testing"
+order: 4
+description: "Write test harnesses, use assertions, and build a testing mindset for C programs."
+difficulty: "intermediate"
+---
+
+In most languages, bugs mean wrong output or an exception with a nice stack trace. In C, bugs mean **silent corruption**, security vulnerabilities, and crashes that happen three functions away from the actual error. There's no garbage collector to save you from memory leaks, no bounds checking to catch buffer overflows, and no type system strong enough to prevent you from casting a `float*` to an `int*` and reading garbage.
+
+This is why testing in C isn't just good practice — it's survival. Every function that touches memory, every boundary condition, every edge case is a potential landmine. Tests are the metal detector.
+
+## The assert Macro
+
+The simplest testing tool in C is `assert()`. It takes a boolean expression, and if that expression is false, it prints an error message (including the file, line, and the expression itself) and terminates the program. It's brutal but effective — your test either passes silently or screams and dies.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <assert.h>
+#include <string.h>
+
+// assert(expression) — if false, prints error and aborts
+
+int max(int a, int b) { return a > b ? a : b; }
+int min(int a, int b) { return a < b ? a : b; }
+int clamp(int x, int lo, int hi) { return min(max(x, lo), hi); }
+
+int main() {
+    // Test max
+    assert(max(3, 5) == 5);
+    assert(max(10, 2) == 10);
+    assert(max(-1, -5) == -1);
+    assert(max(7, 7) == 7);
+
+    // Test min
+    assert(min(3, 5) == 3);
+    assert(min(-1, -5) == -5);
+
+    // Test clamp
+    assert(clamp(5, 0, 10) == 5);    // In range
+    assert(clamp(-5, 0, 10) == 0);   // Below
+    assert(clamp(15, 0, 10) == 10);  // Above
+    assert(clamp(0, 0, 10) == 0);    // Edge
+
+    printf("All tests passed!\\n");
+    return 0;
+}
+`} />
+
+<Callout type="warning">
+`assert` is disabled when you compile with `-DNDEBUG`. This is by design — assertions are for development, not production. But this means you should **never put side effects inside assert**: `assert(fclose(f) == 0)` would skip the `fclose` entirely in release builds! Use assert only for checking invariants, never for doing work.
+</Callout>
+
+But `assert` has a problem: the first failure kills the program. You don't find out about failures 2, 3, and 4. For a real test suite, you need something that keeps running after a failure so you see the full picture.
+
+## A Simple Test Framework
+
+C doesn't have a built-in testing framework like Python's `unittest` or Java's JUnit. But you can build an effective one in about 20 lines of macros. The key idea is the **Arrange-Act-Assert** pattern:
+
+1. **Arrange**: Set up the inputs and expected outputs
+2. **Act**: Call the function you're testing
+3. **Assert**: Check that the actual result matches expectations
+
+If the assertion fails, print the details and mark the test as failed — but keep running the rest of the tests.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <math.h>
+
+// ---- Mini Test Framework ----
+
+static int tests_run = 0;
+static int tests_passed = 0;
+
+#define TEST(name) void name(void)
+#define RUN_TEST(name) do { \\
+    tests_run++; \\
+    printf("  %-40s", #name); \\
+    name(); \\
+    tests_passed++; \\
+    printf("PASS\\n"); \\
+} while(0)
+
+#define ASSERT_EQ(a, b) do { \\
+    if ((a) != (b)) { \\
+        printf("FAIL\\n    %s:%d: %d != %d\\n", __FILE__, __LINE__, (a), (b)); \\
+        return; \\
+    } \\
+} while(0)
+
+#define ASSERT_STR_EQ(a, b) do { \\
+    if (strcmp((a), (b)) != 0) { \\
+        printf("FAIL\\n    %s:%d: \\\"%s\\\" != \\\"%s\\\"\\n", __FILE__, __LINE__, (a), (b)); \\
+        return; \\
+    } \\
+} while(0)
+
+#define ASSERT_TRUE(cond) do { \\
+    if (!(cond)) { \\
+        printf("FAIL\\n    %s:%d: condition false\\n", __FILE__, __LINE__); \\
+        return; \\
+    } \\
+} while(0)
+
+// ---- Code Under Test ----
+
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+void reverse_string(char *s) {
+    int len = strlen(s);
+    for (int i = 0; i < len / 2; i++) {
+        char tmp = s[i];
+        s[i] = s[len - 1 - i];
+        s[len - 1 - i] = tmp;
+    }
+}
+
+int is_palindrome(const char *s) {
+    int len = strlen(s);
+    for (int i = 0; i < len / 2; i++) {
+        if (s[i] != s[len - 1 - i]) return 0;
+    }
+    return 1;
+}
+
+// ---- Tests ----
+
+TEST(test_factorial_base) {
+    ASSERT_EQ(factorial(0), 1);
+    ASSERT_EQ(factorial(1), 1);
+}
+
+TEST(test_factorial_normal) {
+    ASSERT_EQ(factorial(5), 120);
+    ASSERT_EQ(factorial(10), 3628800);
+}
+
+TEST(test_reverse_string) {
+    char s1[] = "hello";
+    reverse_string(s1);
+    ASSERT_STR_EQ(s1, "olleh");
+
+    char s2[] = "a";
+    reverse_string(s2);
+    ASSERT_STR_EQ(s2, "a");
+
+    char s3[] = "";
+    reverse_string(s3);
+    ASSERT_STR_EQ(s3, "");
+}
+
+TEST(test_palindrome) {
+    ASSERT_TRUE(is_palindrome("racecar"));
+    ASSERT_TRUE(is_palindrome("a"));
+    ASSERT_TRUE(is_palindrome(""));
+    ASSERT_TRUE(!is_palindrome("hello"));
+}
+
+// ---- Runner ----
+
+int main() {
+    printf("Running tests:\\n\\n");
+
+    RUN_TEST(test_factorial_base);
+    RUN_TEST(test_factorial_normal);
+    RUN_TEST(test_reverse_string);
+    RUN_TEST(test_palindrome);
+
+    printf("\\n%d/%d tests passed\\n", tests_passed, tests_run);
+    return tests_passed == tests_run ? 0 : 1;
+}
+`} />
+
+Notice the return value of `main`: 0 for all-pass, 1 for any failure. This is crucial for CI pipelines — the build system checks the exit code to decide if the build is green or red.
+
+## Why Test Edge Cases
+
+Most bugs live at the boundaries. Your function works perfectly for "normal" inputs but breaks on empty strings, NULL pointers, zero-length arrays, `INT_MAX`, or negative numbers. These aren't exotic scenarios — they're the inputs your function *will* receive eventually.
+
+The mental model: imagine your function as a house. Normal inputs walk through the front door. Edge cases try to enter through the windows, the chimney, and the sewer pipe. If you only test the front door, you'll be surprised when something comes in through the basement.
+
+Always test these categories:
+- **Empty/null**: `NULL`, `""`, 0, empty array
+- **Single element**: arrays of size 1, strings of length 1
+- **Boundary values**: `INT_MAX`, `INT_MIN`, `SIZE_MAX`
+- **Negative numbers**: especially when the function expects positive
+- **Duplicates**: all-same arrays, repeated characters
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Pattern 1: Arrange-Act-Assert
+//   Arrange: set up inputs
+//   Act: call the function
+//   Assert: verify the result
+
+// Pattern 2: Edge case testing
+// Always test:
+//   - Empty input (NULL, "", 0, empty array)
+//   - Single element
+//   - Boundary values (INT_MAX, INT_MIN, SIZE_MAX)
+//   - Negative numbers
+//   - Duplicate values
+
+// Pattern 3: Test setup/teardown
+typedef struct {
+    int *data;
+    int size;
+    int capacity;
+} IntArray;
+
+IntArray *array_create(int cap) {
+    IntArray *a = malloc(sizeof(IntArray));
+    a->data = malloc(cap * sizeof(int));
+    a->size = 0;
+    a->capacity = cap;
+    return a;
+}
+
+void array_push(IntArray *a, int val) {
+    if (a->size < a->capacity) {
+        a->data[a->size++] = val;
+    }
+}
+
+void array_destroy(IntArray *a) {
+    free(a->data);
+    free(a);
+}
+
+int main() {
+    printf("Testing IntArray:\\n\\n");
+    int pass = 0, total = 0;
+
+    // Test: create and destroy
+    total++;
+    IntArray *a = array_create(10);
+    if (a != NULL && a->size == 0 && a->capacity == 10) {
+        printf("  create:      PASS\\n"); pass++;
+    } else {
+        printf("  create:      FAIL\\n");
+    }
+
+    // Test: push elements
+    total++;
+    array_push(a, 42);
+    array_push(a, 99);
+    if (a->size == 2 && a->data[0] == 42 && a->data[1] == 99) {
+        printf("  push:        PASS\\n"); pass++;
+    } else {
+        printf("  push:        FAIL\\n");
+    }
+
+    // Test: capacity limit
+    total++;
+    IntArray *small = array_create(2);
+    array_push(small, 1);
+    array_push(small, 2);
+    array_push(small, 3);  // Should not add
+    if (small->size == 2) {
+        printf("  cap limit:   PASS\\n"); pass++;
+    } else {
+        printf("  cap limit:   FAIL\\n");
+    }
+
+    // Teardown
+    array_destroy(a);
+    array_destroy(small);
+
+    printf("\\n%d/%d passed\\n", pass, total);
+    return pass == total ? 0 : 1;
+}
+`} />
+
+## Defensive Programming
+
+Why do we sprinkle checks throughout our code? Because in C, **the caller can always pass garbage**. There's no type system enforcing that a pointer isn't NULL, that an index is in bounds, or that an integer hasn't overflowed. Defensive programming means validating inputs at function boundaries — the places where your code meets the outside world.
+
+Think of it like a nightclub bouncer. Inside the club (your function internals), you can assume everyone has a valid ID. But at the door (function entry), you check. The alternative is letting anyone in and hoping for the best — which in C means hoping that NULL pointer dereference doesn't happen in production.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Defensive patterns: validate inputs at function boundaries
+
+// 1. Precondition checking
+int safe_divide(int a, int b) {
+    assert(b != 0 && "Division by zero");
+    return a / b;
+}
+
+// 2. NULL checking
+char *safe_strdup(const char *s) {
+    if (s == NULL) return NULL;
+    char *copy = malloc(strlen(s) + 1);
+    if (copy == NULL) return NULL;  // malloc failed
+    strcpy(copy, s);
+    return copy;
+}
+
+// 3. Bounds checking
+int safe_array_get(const int *arr, int size, int index) {
+    assert(arr != NULL && "NULL array");
+    assert(index >= 0 && index < size && "Index out of bounds");
+    return arr[index];
+}
+
+// 4. Error return codes
+typedef enum {
+    OK = 0,
+    ERR_NULL = -1,
+    ERR_OVERFLOW = -2,
+    ERR_BOUNDS = -3
+} Error;
+
+Error safe_add(int a, int b, int *result) {
+    if (result == NULL) return ERR_NULL;
+    // Check for signed overflow
+    if ((b > 0 && a > __INT_MAX__ - b) ||
+        (b < 0 && a < (-__INT_MAX__ - 1) - b)) {
+        return ERR_OVERFLOW;
+    }
+    *result = a + b;
+    return OK;
+}
+
+int main() {
+    printf("Defensive programming patterns:\\n\\n");
+
+    // Safe divide
+    printf("10 / 3 = %d\\n", safe_divide(10, 3));
+
+    // Safe strdup
+    char *s = safe_strdup("hello");
+    printf("strdup: %s\\n", s);
+    free(s);
+
+    // NULL strdup
+    char *n = safe_strdup(NULL);
+    printf("strdup(NULL): %s\\n", n == NULL ? "NULL" : n);
+
+    // Safe add
+    int result;
+    Error err = safe_add(100, 200, &result);
+    printf("100 + 200 = %d (err=%d)\\n", result, err);
+
+    err = safe_add(__INT_MAX__, 1, &result);
+    printf("INT_MAX + 1: err=%d (overflow)\\n", err);
+
+    return 0;
+}
+`} />
+
+Note the two different styles: `assert` for programmer errors (conditions that should *never* happen if the code is correct — these are for catching bugs during development) vs. error return codes for runtime errors (conditions that *can* happen even in correct code, like running out of memory or receiving bad user input). Tests verify both: that assertions fire on invalid inputs and that error codes are returned for recoverable failures.
+
+## Exercise: Test a Stack
+
+<Exercise
+  title="Stack test suite"
+  description="Implement a stack with push/pop/peek/is_empty, then run the test suite. Read N operations: 'push X', 'pop' (print popped value or 'empty'), 'peek' (print top or 'empty'), 'size' (print current size)."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_STACK 100
+
+int stack[MAX_STACK];
+int top = -1;
+
+void push(int val) {
+    if (top < MAX_STACK - 1) stack[++top] = val;
+}
+
+int pop(void) {
+    if (top >= 0) return stack[top--];
+    return -1;  // sentinel
+}
+
+int peek(void) {
+    if (top >= 0) return stack[top];
+    return -1;
+}
+
+int is_empty(void) { return top < 0; }
+int size(void) { return top + 1; }
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char op[16];
+        scanf("%15s", op);
+
+        if (strcmp(op, "push") == 0) {
+            int val;
+            scanf("%d", &val);
+            push(val);
+        } else if (strcmp(op, "pop") == 0) {
+            if (is_empty()) printf("empty\\n");
+            else printf("%d\\n", pop());
+        } else if (strcmp(op, "peek") == 0) {
+            if (is_empty()) printf("empty\\n");
+            else printf("%d\\n", peek());
+        } else if (strcmp(op, "size") == 0) {
+            printf("%d\\n", size());
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\npush 10\npush 20\npeek\npop\npop\npop", expected_stdout: "20\n20\n10\nempty\n" },
+    { stdin: "3\nsize\npush 5\nsize", expected_stdout: "0\n1\n" },
+    { stdin: "4\npush 1\npush 2\npush 3\nsize", expected_stdout: "3\n" },
+    { stdin: "2\npeek\npop", expected_stdout: "empty\nempty\n" }
+  ]}
+  hints={[
+    "push increments top then stores. pop returns and decrements.",
+    "Check is_empty() before pop and peek to print 'empty'.",
+    "size is top + 1 (top starts at -1 for empty)."
+  ]}
+/>
+
+## Exercise: Assert-Based Verifier
+
+<Exercise
+  title="Verify sorted output"
+  description="Read N integers into an array. Sort them (any method). Print the sorted array space-separated. Then verify it's sorted by checking each adjacent pair. Print 'verified' if sorted correctly, 'error' otherwise."
+  starterCode={`#include <stdio.h>
+
+void sort(int *arr, int n) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = 0; j < n - 1 - i; j++) {
+            if (arr[j] > arr[j + 1]) {
+                int tmp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = tmp;
+            }
+        }
+    }
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    sort(arr, n);
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    // Verify
+    int sorted = 1;
+    for (int i = 0; i < n - 1; i++) {
+        if (arr[i] > arr[i + 1]) { sorted = 0; break; }
+    }
+    printf("%s\\n", sorted ? "verified" : "error");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n3 1 4 1 5", expected_stdout: "1 1 3 4 5\nverified\n" },
+    { stdin: "3\n3 2 1", expected_stdout: "1 2 3\nverified\n" },
+    { stdin: "1\n42", expected_stdout: "42\nverified\n" },
+    { stdin: "4\n-5 3 -1 2", expected_stdout: "-5 -1 2 3\nverified\n" }
+  ]}
+  hints={[
+    "Bubble sort is fine for this exercise.",
+    "After sorting, check arr[i] <= arr[i+1] for all adjacent pairs.",
+    "If any pair is out of order, the sort has a bug."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next phase: **Embedded & Constrained C** — writing C for resource-limited environments.

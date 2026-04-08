@@ -1,0 +1,341 @@
+---
+title: "TCP Sockets"
+module: "IPC & Sockets"
+order: 2
+description: "Creating TCP client-server applications with the Berkeley sockets API."
+difficulty: "advanced"
+---
+
+So far, all our IPC mechanisms — pipes, shared memory, message queues — work only between processes on the same machine. What if two programs need to talk across a network? That's what sockets are for. They're the universal communication endpoint: two processes create sockets, connect them (possibly across the internet), and exchange data through them.
+
+The sockets API was designed at UC Berkeley in the early 1980s and has barely changed since. Every networked application you've ever used — web browsers, email clients, chat apps, games — is built on this same API. Learning it once gives you the foundation for all network programming.
+
+## The Postal System Analogy
+
+Think of TCP sockets like the postal system, but one that guarantees delivery:
+
+**Addresses**: Every house (computer) has a street address (IP address). Within each house, rooms have numbers (port numbers). To send a letter, you need both — "123 Main St, Room 8080" is like "192.168.1.5:8080".
+
+**Connections**: Before exchanging packages, the post office establishes a dedicated route between sender and receiver. Both sides know the connection exists, and everything sent through it arrives in order and intact. If a package is lost, the post office automatically resends it — you never notice.
+
+**Reliability**: The postal service tracks every package with a sequence number. The receiver sends back acknowledgments ("I got package #3"). If the sender doesn't get an acknowledgment, it resends. This is exactly how TCP works — sequence numbers, acknowledgments, and automatic retransmission.
+
+## The Socket API
+
+The Berkeley sockets API follows this pattern:
+
+```
+Server:                    Client:
+socket()                   socket()
+bind()                     
+listen()                   
+accept() ←── connection ── connect()
+read/write ←── data ──→   read/write
+close()                    close()
+```
+
+This looks like a lot of steps, but each one serves a specific purpose. Understanding *why* each exists is the key to mastering sockets.
+
+**`socket()`** — Create a communication endpoint. Think of it as buying a phone. You don't have a number yet, and you're not calling anyone — you just have the device. You specify the type of communication you want: `SOCK_STREAM` for TCP (reliable, ordered) or `SOCK_DGRAM` for UDP (fast, unreliable).
+
+**`bind()`** — Assign an address and port to the socket. This is like getting a phone number. The server needs a well-known address so clients can find it. Clients usually skip this step — the OS assigns them an ephemeral port automatically, just like your phone making an outgoing call doesn't need a published number.
+
+**`listen()`** — Mark the socket as passive, ready to accept incoming connections. This is like turning on the ringer. The socket is now a *listening socket* — it doesn't carry data itself, it just waits for connection requests to arrive. The backlog parameter says how many pending connections can queue up.
+
+**`accept()`** — Wait for and accept an incoming connection. This is where the magic happens. `accept()` blocks until a client connects, then *returns a brand new socket* — a *connected socket* that represents this specific conversation. The original listening socket stays open, ready for more clients.
+
+**`connect()`** — (Client side) Initiate a connection to a server. This is like dialing a phone number. The TCP three-way handshake happens here: your machine sends SYN, the server responds SYN-ACK, you send ACK, and the connection is established.
+
+## The Listening Socket vs Connected Socket
+
+This distinction trips up most beginners. After `accept()`, you have **two** sockets:
+
+- The **listening socket** (`server_fd`): still waiting for new connections. It never carries application data.
+- The **connected socket** (returned by `accept()`): represents one specific client conversation. All reads and writes happen here.
+
+It's like a receptionist at a hotel. The reception desk (listening socket) is always open, handling new arrivals. Each guest gets their own room key (connected socket) for their specific stay. The reception desk doesn't move into the room — it stays at the lobby, ready for the next guest.
+
+## Socket Types
+
+| Type | Protocol | Properties |
+|------|----------|------------|
+| `SOCK_STREAM` | TCP | Reliable, ordered, connection-oriented |
+| `SOCK_DGRAM` | UDP | Unreliable, unordered, connectionless |
+| `SOCK_RAW` | Raw | Direct IP access (requires root) |
+
+## TCP Server
+
+Here's a complete TCP server. Read through it step by step — each call maps to the concepts we discussed above:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
+int main() {
+    // 1. Create socket
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
+        return 1;
+    }
+
+    // Allow address reuse
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    // 2. Bind to address and port
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = INADDR_ANY,  // Listen on all interfaces
+        .sin_port = htons(8080)          // Port 8080
+    };
+
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        return 1;
+    }
+
+    // 3. Listen for connections
+    listen(server_fd, 5);  // Backlog of 5 pending connections
+    printf("Server listening on port 8080...\\n");
+
+    // 4. Accept a connection
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+
+    // 5. Read and write
+    char buffer[1024] = {0};
+    read(client_fd, buffer, sizeof(buffer));
+    printf("Received: %s\\n", buffer);
+
+    const char *response = "Hello from server!";
+    write(client_fd, response, strlen(response));
+
+    // 6. Cleanup
+    close(client_fd);
+    close(server_fd);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+A few things to notice: `SO_REUSEADDR` tells the OS to let us rebind to this address immediately if the server restarts. Without it, you'd get "Address already in use" errors for a few minutes after stopping the server (because TCP keeps the old connection in `TIME_WAIT` state). `INADDR_ANY` means "listen on all network interfaces" — not just localhost, but also your ethernet, WiFi, etc.
+
+<Callout type="info">
+This is a demo — creating sockets requires a real OS environment. The sandbox can't create network connections, but understanding the API is crucial for systems programming.
+</Callout>
+
+## TCP Client
+
+The client is simpler — no `bind()`, `listen()`, or `accept()`. Just create a socket and `connect()`:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+int main() {
+    // 1. Create socket
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return 1;
+    }
+
+    // 2. Connect to server
+    struct sockaddr_in server_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(8080)
+    };
+    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("connect");
+        return 1;
+    }
+
+    printf("Connected to server!\\n");
+
+    // 3. Send and receive
+    const char *message = "Hello from client!";
+    write(sock, message, strlen(message));
+
+    char buffer[1024] = {0};
+    read(sock, buffer, sizeof(buffer));
+    printf("Server says: %s\\n", buffer);
+
+    // 4. Cleanup
+    close(sock);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Notice `inet_pton()` — it converts the human-readable string "127.0.0.1" into the binary format that the network stack needs. The "pton" stands for "presentation to network." Its counterpart, `inet_ntop()`, goes the other direction.
+
+## The Byte Stream Abstraction
+
+TCP provides a **byte stream**, not a message stream. This is one of the most important things to understand that isn't obvious from the API.
+
+When you call `write(sock, "Hello", 5)` followed by `write(sock, "World", 5)`, the receiver might get all 10 bytes in one `read()`, or 3 bytes then 7, or 1 byte at a time — there are no message boundaries. TCP guarantees the bytes arrive in order, but it makes no promises about how they're grouped.
+
+This means you **must handle partial reads and writes** in production code. A single `read()` call might return fewer bytes than you asked for — not because something went wrong, but because that's all that's arrived so far. You need a loop:
+
+```c
+// Read exactly `total` bytes (or until error/EOF)
+ssize_t read_all(int fd, void *buf, size_t total) {
+    size_t received = 0;
+    while (received < total) {
+        ssize_t n = read(fd, (char *)buf + received, total - received);
+        if (n <= 0) return n;  // Error or EOF
+        received += n;
+    }
+    return received;
+}
+```
+
+Similarly, `write()` can write fewer bytes than you asked — especially with large buffers or congested networks. Always check the return value and loop.
+
+## Byte Order (Endianness)
+
+Different CPUs store multi-byte numbers differently. Intel/AMD (x86) is little-endian: the least significant byte comes first in memory. Network protocols use big-endian (most significant byte first). If you send a raw integer from an x86 machine and the receiver reads it without conversion, the bytes are backwards and the number is wrong.
+
+The solution is always converting to "network byte order" (big-endian) before sending, and converting back to "host byte order" after receiving. The conversion functions have intuitive names:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <arpa/inet.h>
+
+int main() {
+    // Host to Network byte order conversion
+    printf("=== Byte Order Conversion ===\\n\\n");
+
+    uint16_t port = 8080;
+    uint32_t addr = 0xC0A80001;  // 192.168.0.1
+
+    printf("Host byte order:\\n");
+    printf("  Port: 0x%04X (%u)\\n", port, port);
+    printf("  Addr: 0x%08X\\n\\n", addr);
+
+    printf("Network byte order (htons/htonl):\\n");
+    printf("  Port: 0x%04X\\n", htons(port));
+    printf("  Addr: 0x%08X\\n\\n", htonl(addr));
+
+    printf("Conversion functions:\\n");
+    printf("  htons() - host to network short (16-bit)\\n");
+    printf("  htonl() - host to network long  (32-bit)\\n");
+    printf("  ntohs() - network to host short\\n");
+    printf("  ntohl() - network to host long\\n");
+
+    // Check system endianness
+    uint32_t test = 1;
+    if (*(char *)&test == 1) {
+        printf("\\nThis system is LITTLE-ENDIAN\\n");
+    } else {
+        printf("\\nThis system is BIG-ENDIAN\\n");
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The function names encode the direction: `h`ost `to` `n`etwork `s`hort, `h`ost `to` `n`etwork `l`ong, and their inverses. On a big-endian machine, these functions do nothing — but you still call them so your code is portable.
+
+## Address Structures
+
+The socket API uses a generic `struct sockaddr` for all address types, but you work with type-specific structures and cast:
+
+```c
+// IPv4 address
+struct sockaddr_in {
+    sa_family_t    sin_family;  // AF_INET
+    in_port_t      sin_port;    // Port (network byte order)
+    struct in_addr sin_addr;    // IP address
+};
+
+// IPv6 address
+struct sockaddr_in6 {
+    sa_family_t     sin6_family;  // AF_INET6
+    in_port_t       sin6_port;    // Port
+    struct in6_addr sin6_addr;    // IPv6 address
+};
+```
+
+The cast `(struct sockaddr *)&addr` that you see in every socket call is an artifact of C's type system — the socket API predates `void *` and was designed to work with multiple address families. It's ugly but universal.
+
+## Exercise: IP Address Parser
+
+<Exercise
+  title="Parse IPv4 addresses"
+  description="Read N IPv4 addresses in dotted notation (e.g., '192.168.1.1'). For each, print the four octets as decimal numbers separated by spaces."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        int a, b, c, d;
+        scanf("%d.%d.%d.%d", &a, &b, &c, &d);
+        printf("%d %d %d %d\\n", a, b, c, d);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n192.168.1.1\n10.0.0.1\n127.0.0.1", expected_stdout: "192 168 1 1\n10 0 0 1\n127 0 0 1\n" },
+    { stdin: "1\n255.255.255.0", expected_stdout: "255 255 255 0\n" }
+  ]}
+  hints={[
+    "scanf with %d.%d.%d.%d handles the dotted format.",
+    "Each octet is a number 0-255.",
+    "127.0.0.1 is the loopback address (localhost)."
+  ]}
+/>
+
+## Exercise: Port Number Classifier
+
+<Exercise
+  title="Port categories"
+  description="Read N port numbers. For each, classify: 0-1023 as 'well-known', 1024-49151 as 'registered', 49152-65535 as 'dynamic'. Print the classification."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        int port;
+        scanf("%d", &port);
+
+        if (port >= 0 && port <= 1023) {
+            printf("well-known\\n");
+        } else if (port <= 49151) {
+            printf("registered\\n");
+        } else if (port <= 65535) {
+            printf("dynamic\\n");
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n80 443 8080 22 50000", expected_stdout: "well-known\nwell-known\nregistered\nwell-known\ndynamic\n" },
+    { stdin: "3\n3306 5432 65535", expected_stdout: "registered\nregistered\ndynamic\n" }
+  ]}
+  hints={[
+    "Ports 0-1023 are well-known (HTTP=80, HTTPS=443, SSH=22).",
+    "Ports 1024-49151 are registered (MySQL=3306, PostgreSQL=5432).",
+    "Ports 49152-65535 are dynamic/ephemeral (used by the OS)."
+  ]}
+/>
+
+## What's Next
+
+Beyond TCP: **UDP sockets and advanced network patterns** — connectionless communication and building real protocols.

@@ -1,0 +1,319 @@
+---
+title: "Greedy Algorithms"
+module: "Algorithm Techniques"
+order: 4
+description: "Learn to solve optimization problems by making the locally optimal choice at each step."
+difficulty: "intermediate"
+---
+
+A **greedy algorithm** makes the best-looking choice at each step without considering
+the global picture. No lookahead, no backtracking, no table of subproblem results. Just
+pick what seems best right now and move on.
+
+That sounds naive. And often, it is — greedy doesn't always work. But when it does,
+it produces elegant, efficient solutions. The hard part is knowing *when* it works and
+*why*.
+
+## When Greedy Works (and When It Doesn't)
+
+Greedy succeeds when two conditions hold:
+
+1. **Greedy choice property** — making the locally optimal choice doesn't cut off
+   the globally optimal solution. The best local move is compatible with the best
+   global outcome.
+2. **Optimal substructure** — after making a greedy choice, the remaining problem
+   has the same structure as the original.
+
+The dangerous part: these properties are often hard to prove, and intuition can mislead.
+Let's see both sides.
+
+## The Coin Change Trap
+
+Making change with US coins (25¢, 10¢, 5¢, 1¢) using greedy is what a cashier does:
+pick the largest coin that fits, repeat. For 67¢: 25+25+10+5+1+1 = 6 coins. Optimal.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void make_change(int amount, int coins[], int n) {
+    printf("Making change for %d cents:\\n", amount);
+    int total_coins = 0;
+
+    for (int i = 0; i < n; i++) {
+        int count = amount / coins[i];
+        if (count > 0) {
+            printf("  %d x %dc\\n", count, coins[i]);
+            total_coins += count;
+            amount %= coins[i];
+        }
+    }
+    printf("  Total: %d coins\\n", total_coins);
+}
+
+int main() {
+    // US coins — greedy works!
+    int us_coins[] = {25, 10, 5, 1};
+    make_change(67, us_coins, 4);
+
+    printf("\\n");
+
+    // But try coins {1, 3, 4} for amount 6:
+    int weird_coins[] = {4, 3, 1};
+    printf("Greedy with {4, 3, 1} for 6 cents:\\n");
+    make_change(6, weird_coins, 3);
+    printf("\\nBut optimal is: 2 x 3c = 2 coins!\\n");
+    printf("Greedy grabbed 4 first, which forced 1+1.\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="warning">
+The US coin system is specifically designed so that greedy works. With arbitrary
+denominations, greedy can fail because taking the biggest coin now might prevent a
+better combination later. The general coin change problem requires **dynamic
+programming**.
+</Callout>
+
+What went wrong? Greedy picked 4 because it was the biggest coin ≤ 6. But that choice
+left a remainder of 2, which can only be made with 1+1. The better choice was 3+3.
+Greedy couldn't see that picking a "worse" coin (3 instead of 4) would lead to a
+better global outcome.
+
+This is the fundamental tension: **greedy sees one step ahead, but some problems
+require seeing two or more steps ahead.**
+
+## Activity Selection: Where Greedy Shines
+
+**Problem:** Given activities with start and finish times, pick the maximum number
+of non-overlapping activities.
+
+Your intuition might say: pick the shortest activity, or the one that starts earliest.
+Both are wrong. The correct greedy strategy is: **always pick the activity that
+finishes earliest**.
+
+Why? Because finishing early leaves the most room for future activities. You're
+maximizing the time remaining — and no matter what, finishing early can't be worse
+than finishing late.
+
+<Editor defaultCode={`#include <stdio.h>
+
+typedef struct {
+    int start, finish;
+    char name;
+} Activity;
+
+void sort_by_finish(Activity acts[], int n) {
+    for (int i = 1; i < n; i++) {
+        Activity key = acts[i];
+        int j = i - 1;
+        while (j >= 0 && acts[j].finish > key.finish) {
+            acts[j + 1] = acts[j];
+            j--;
+        }
+        acts[j + 1] = key;
+    }
+}
+
+int main() {
+    Activity acts[] = {
+        {1, 4, 'A'}, {3, 5, 'B'}, {0, 6, 'C'},
+        {5, 7, 'D'}, {3, 9, 'E'}, {5, 9, 'F'},
+        {6, 10, 'G'}, {8, 11, 'H'}, {8, 12, 'I'},
+        {2, 14, 'J'}, {12, 16, 'K'}
+    };
+    int n = 11;
+
+    sort_by_finish(acts, n);
+
+    printf("All activities (sorted by finish time):\\n");
+    for (int i = 0; i < n; i++)
+        printf("  %c: [%d, %d)\\n", acts[i].name, acts[i].start, acts[i].finish);
+
+    printf("\\nGreedy selection:\\n");
+    int last_finish = -1;
+    int count = 0;
+
+    for (int i = 0; i < n; i++) {
+        if (acts[i].start >= last_finish) {
+            printf("  %c: [%d, %d)\\n", acts[i].name,
+                   acts[i].start, acts[i].finish);
+            last_finish = acts[i].finish;
+            count++;
+        }
+    }
+    printf("\\nMaximum non-overlapping: %d activities\\n", count);
+
+    return 0;
+}
+`} time="O(n log n)" space="O(1)" />
+
+### The Proof Intuition
+
+Suppose the optimal solution picks some activity X that finishes at time 10, and our
+greedy picks activity Y that finishes at time 7. Since Y finishes earlier, everything
+X allows is also allowed by Y — plus potentially more. So swapping X for Y in the
+optimal solution can't make it worse. This "exchange argument" is how most greedy
+correctness proofs work.
+
+## Fractional Knapsack
+
+You have a knapsack with capacity `W` and items with weights and values. **You can
+take fractions of items** (unlike the 0/1 knapsack that requires DP).
+
+Why does greedy work here but not for 0/1 knapsack? Because you can always take
+*exactly* as much as you need of the best item. There's no "I took too much and now
+I can't fit the next one" problem. Fractional means no commitment — the greedy choice
+is always reversible in a sense.
+
+Strategy: sort by value-per-weight ratio, take greedily.
+
+<Editor defaultCode={`#include <stdio.h>
+
+typedef struct {
+    int weight, value;
+    double ratio;
+} Item;
+
+void sort_by_ratio(Item items[], int n) {
+    for (int i = 1; i < n; i++) {
+        Item key = items[i];
+        int j = i - 1;
+        while (j >= 0 && items[j].ratio < key.ratio) {
+            items[j + 1] = items[j];
+            j--;
+        }
+        items[j + 1] = key;
+    }
+}
+
+int main() {
+    Item items[] = {
+        {10, 60, 0}, {20, 100, 0}, {30, 120, 0}
+    };
+    int n = 3, capacity = 50;
+
+    for (int i = 0; i < n; i++)
+        items[i].ratio = (double)items[i].value / items[i].weight;
+
+    sort_by_ratio(items, n);
+
+    printf("Items sorted by value/weight:\\n");
+    for (int i = 0; i < n; i++)
+        printf("  w=%d v=%d ratio=%.1f\\n",
+               items[i].weight, items[i].value, items[i].ratio);
+
+    double total = 0;
+    int remaining = capacity;
+
+    printf("\\nPacking (capacity=%d):\\n", capacity);
+    for (int i = 0; i < n && remaining > 0; i++) {
+        if (items[i].weight <= remaining) {
+            printf("  Take 100%% of (w=%d, v=%d)\\n",
+                   items[i].weight, items[i].value);
+            total += items[i].value;
+            remaining -= items[i].weight;
+        } else {
+            double frac = (double)remaining / items[i].weight;
+            printf("  Take %.0f%% of (w=%d, v=%d) -> value=%.1f\\n",
+                   frac * 100, items[i].weight, items[i].value,
+                   items[i].value * frac);
+            total += items[i].value * frac;
+            remaining = 0;
+        }
+    }
+    printf("\\nTotal value: %.1f\\n", total);
+
+    return 0;
+}
+`} time="O(n log n)" space="O(1)" />
+
+<Callout type="info">
+**Fractional knapsack** → greedy (you can take partial items, so the best ratio always
+wins). **0/1 knapsack** → DP (taking an item is all-or-nothing, so the best ratio
+might waste capacity). The constraint "whole items only" is what breaks greedy.
+</Callout>
+
+## Greedy vs. Other Strategies
+
+| Approach | When to use | Cost |
+|----------|------------|------|
+| **Greedy** | Local best = global best (provable) | O(n log n) typically |
+| **DP** | Overlapping subproblems, greedy fails | O(n × state_size) |
+| **Backtracking** | Need to explore all possibilities | O(exponential) |
+
+The art is recognizing which category your problem falls into:
+- If greedy seems right, try to find a counterexample. If you can't, it's probably greedy.
+- If you find a counterexample (like weird coins), it's DP or backtracking.
+- If the problem asks "find ALL solutions" (not just the best), it's probably backtracking.
+
+## Exercise: Minimum Platforms
+
+<Exercise
+  title="Minimum platforms"
+  description="Given arrival and departure times of trains, find the minimum number of platforms needed so no train waits. Read n, then n arrival times, then n departure times (all integers, sorted). Print the minimum platforms needed."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arrive[1000], depart[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arrive[i]);
+    for (int i = 0; i < n; i++) scanf("%d", &depart[i]);
+
+    // Think of events on a timeline: arrivals increase platform need,
+    // departures decrease it. Merge-scan both sorted arrays.
+    int platforms = 0;
+    int max_platforms = 0;
+    int i = 0, j = 0;
+
+    printf("%d\\n", max_platforms);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n100 140 150 200 215 400\n110 300 220 230 315 600", expected_stdout: "3\n" },
+    { stdin: "3\n100 200 300\n110 210 310", expected_stdout: "1\n" },
+    { stdin: "2\n100 100\n200 200", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "Sort both arrays. Use two pointers: i for arrivals, j for departures.",
+    "If arrive[i] <= depart[j], a train arrives before one departs: platforms++, i++.",
+    "Otherwise a train departs: platforms--, j++. Track the maximum platforms seen."
+  ]}
+/>
+
+## Exercise: Jump Game
+
+<Exercise
+  title="Can you reach the end?"
+  description="Given an array where each element represents the maximum jump length from that position, determine if you can reach the last index starting from index 0. Print 'true' or 'false'. Read n, then n non-negative integers."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int nums[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &nums[i]);
+
+    // Greedy insight: you don't need to track which jumps you take.
+    // Just track the farthest index you can possibly reach.
+    // If you ever stand on an index beyond your reach, you're stuck.
+
+    printf("false\\n");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n2 3 1 1 4", expected_stdout: "true\n" },
+    { stdin: "5\n3 2 1 0 4", expected_stdout: "false\n" },
+    { stdin: "1\n0", expected_stdout: "true\n" },
+    { stdin: "3\n1 1 0", expected_stdout: "true\n" }
+  ]}
+  hints={[
+    "Keep a variable 'farthest' = 0. For each index i from 0 to n-1: if i > farthest, you can't reach i — print false.",
+    "Otherwise update farthest = max(farthest, i + nums[i]).",
+    "If you make it through the loop (or farthest >= n-1 at any point), print true."
+  ]}
+/>

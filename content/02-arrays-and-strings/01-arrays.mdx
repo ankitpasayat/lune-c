@@ -1,0 +1,279 @@
+---
+title: "Arrays"
+module: "Arrays and Strings"
+order: 1
+description: "Declaring, initializing, and iterating over arrays — your first data structure in C."
+difficulty: "beginner"
+---
+
+So far you've worked with single variables — one `int`, one `char`. But real programs
+deal with *collections*: a list of test scores, a sequence of sensor readings, a buffer
+of bytes. You need a way to store many values of the same type under one name.
+
+That's an **array**: a fixed-size block of contiguous memory where every element has
+the same type and can be accessed by its position (index).
+
+## Declaring and Initializing Arrays
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Declare and initialize
+    int scores[5] = {90, 85, 78, 92, 88};
+
+    // Declare with size, then assign
+    int counts[3];
+    counts[0] = 10;
+    counts[1] = 20;
+    counts[2] = 30;
+
+    // Let the compiler count
+    int primes[] = {2, 3, 5, 7, 11, 13};
+
+    // Print all scores
+    for (int i = 0; i < 5; i++) {
+        printf("scores[%d] = %d\\n", i, scores[i]);
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Why do indices start at **0** and not 1? It's not arbitrary. An array name represents
+the address of the first element. Index `i` means "start at that address and skip
+forward `i` elements." The first element is zero skips away — so it's `arr[0]`. This
+becomes clearer when you learn about pointers, where `arr[i]` is literally `*(arr + i)`.
+
+## Contiguous Memory — Why It Matters
+
+"Contiguous" means the elements sit right next to each other in memory, with no gaps
+(other than padding). An `int` array of 5 elements occupies 5 × 4 = 20 consecutive
+bytes.
+
+This has two major consequences:
+1. **Instant access**: to reach `arr[i]`, the CPU computes `base_address + i * sizeof(int)`.
+   One multiplication, one addition — O(1) regardless of the array size.
+2. **Cache friendliness**: modern CPUs don't fetch one value from RAM; they fetch a
+   whole "cache line" (typically 64 bytes) at once. If your data is contiguous, the
+   next elements you need are already in the cache. This makes sequential array
+   access *extremely* fast.
+
+You'll see this theme again in linked lists (which are NOT contiguous) and understand
+why arrays often beat them in practice despite their theoretical limitations.
+
+## Array Bounds
+
+C does **not** check array bounds. Accessing beyond the array is undefined behavior:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    int arr[3] = {10, 20, 30};
+
+    printf("arr[0] = %d\\n", arr[0]);  // OK
+    printf("arr[2] = %d\\n", arr[2]);  // OK (last valid index)
+    // arr[3] would be OUT OF BOUNDS — undefined behavior!
+    // arr[-1] is also out of bounds
+
+    printf("Size of array: %zu bytes\\n", sizeof(arr));
+    printf("Number of elements: %zu\\n", sizeof(arr) / sizeof(arr[0]));
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Unlike Python or Java, C will happily let you read or write past the end of an array.
+No exception, no crash (usually) — just silent memory corruption. This is the root
+cause of **buffer overflow** vulnerabilities, one of the most exploited bugs in
+software history. It's your responsibility to never exceed the bounds.
+</Callout>
+
+## Iterating Over Arrays
+
+The standard pattern uses a `for` loop with the array size:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    int data[] = {4, 8, 15, 16, 23, 42};
+    int n = sizeof(data) / sizeof(data[0]);  // Number of elements
+
+    // Forward iteration
+    printf("Forward: ");
+    for (int i = 0; i < n; i++) {
+        printf("%d ", data[i]);
+    }
+    printf("\\n");
+
+    // Reverse iteration
+    printf("Reverse: ");
+    for (int i = n - 1; i >= 0; i--) {
+        printf("%d ", data[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+`sizeof(arr) / sizeof(arr[0])` is the standard idiom for getting the number of elements.
+`sizeof(arr)` gives total bytes, `sizeof(arr[0])` gives the size of one element. But
+this only works when `arr` is a true array, not a pointer — a distinction that matters
+when you pass arrays to functions.
+</Callout>
+
+## Arrays and Functions
+
+When you pass an array to a function, something surprising happens — the array
+**decays to a pointer**. The function doesn't receive a copy of the array; it receives
+the memory address of the first element. This means:
+
+1. The function can modify the original array (no "pass by value" copy).
+2. `sizeof(arr)` inside the function gives the pointer size (8 bytes on 64-bit),
+   not the array size. So you must pass the size separately.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int sum(int arr[], int size) {
+    int total = 0;
+    for (int i = 0; i < size; i++) {
+        total += arr[i];
+    }
+    return total;
+}
+
+void print_array(int arr[], int size) {
+    for (int i = 0; i < size; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+}
+
+int main() {
+    int numbers[] = {1, 2, 3, 4, 5};
+    int n = sizeof(numbers) / sizeof(numbers[0]);
+
+    print_array(numbers, n);
+    printf("Sum: %d\\n", sum(numbers, n));
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Why does C do this? Copying an entire array every time you call a function would be
+wasteful — imagine a 10,000-element array. Instead, C passes just the address (8
+bytes). Efficient, but it means you lose the size information. This is a fundamental
+C design trade-off: performance over safety.
+
+## Partially Initialized Arrays
+
+If you initialize fewer elements than the array size, the rest are set to zero:
+
+```c
+int arr[5] = {1, 2};  // arr = {1, 2, 0, 0, 0}
+int zeros[100] = {0};  // All 100 elements are 0
+```
+
+Uninitialized arrays contain **garbage values** — whatever happened to be in that
+memory location from previous use. Always initialize.
+
+## Exercise: Find the Maximum
+
+<Exercise
+  title="Maximum element"
+  description="Read N (number of elements), then read N integers. Print the maximum value."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];  // Assume n <= 100
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Find and print the maximum
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n3 7 2 9 4", expected_stdout: "9\n" },
+    { stdin: "3\n-5 -2 -8", expected_stdout: "-2\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "Start with max = arr[0], then compare with each subsequent element.",
+    "for (int i = 1; i < n; i++) { if (arr[i] > max) max = arr[i]; }"
+  ]}
+/>
+
+## Exercise: Reverse an Array
+
+<Exercise
+  title="Reverse in place"
+  description="Read N integers, then print them in reverse order, space-separated on one line."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Print the array in reverse
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "5 4 3 2 1\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "30 20 10\n" },
+    { stdin: "1\n7", expected_stdout: "7\n" }
+  ]}
+  hints={[
+    "Loop from the last element to the first: for (int i = n - 1; i >= 0; i--)",
+    "Print a space between elements but not after the last one."
+  ]}
+/>
+
+## Exercise: Count Occurrences
+
+<Exercise
+  title="Count a target value"
+  description="Read N integers, then read a target value. Print how many times the target appears in the array."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int target;
+    scanf("%d", &target);
+
+    // Count and print occurrences of target
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n1 3 5 3 7 3 9\n3", expected_stdout: "3\n" },
+    { stdin: "4\n1 2 3 4\n5", expected_stdout: "0\n" },
+    { stdin: "5\n7 7 7 7 7\n7", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "Initialize a counter to 0, then loop through the array incrementing for each match.",
+    "if (arr[i] == target) count++;"
+  ]}
+/>

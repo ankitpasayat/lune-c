@@ -1,0 +1,383 @@
+---
+title: "Basic Sorts"
+module: "Sorting & Searching"
+order: 2
+description: "Bubble sort, selection sort, and insertion sort — simple O(n²) algorithms to understand sorting fundamentals."
+difficulty: "beginner"
+---
+
+Before diving into efficient sorting algorithms, it's worth spending time with three simple ones. They're too slow for large datasets, but they're small enough to fit entirely in your head — and that makes them perfect for building intuition about what sorting actually *does*.
+
+Every sorting algorithm answers the same question: given an unsorted array, rearrange the elements so they're in order. The differences lie in *how* they decide which elements to move, and *how many operations* that takes.
+
+## Bubble Sort
+
+Bubble sort works by making repeated passes through the array, comparing each pair of adjacent elements and swapping them if they're in the wrong order. After the first pass, the largest element has "bubbled" to the end. After the second pass, the second-largest is in place. And so on.
+
+Think of it like this: imagine a row of people standing in a line, and you want to sort them by height. You walk down the line comparing neighbors. If the taller person is on the left, they swap. By the time you reach the end, the tallest person has been moved all the way to the right. Repeat until everyone is in order.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void bubble_sort(int arr[], int n) {
+    for (int i = 0; i < n - 1; i++) {
+        int swapped = 0;
+        for (int j = 0; j < n - 1 - i; j++) {
+            if (arr[j] > arr[j + 1]) {
+                int temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+                swapped = 1;
+            }
+        }
+        if (!swapped) break;  // already sorted
+    }
+}
+
+int main() {
+    int arr[] = {64, 34, 25, 12, 22, 11, 90};
+    int n = 7;
+
+    bubble_sort(arr, n);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n²)" space="O(1)" />
+
+<Complexity time="O(n²)" space="O(1)" />
+
+### Trace Walkthrough
+
+Let's trace bubble sort on `{5, 3, 8, 1, 2}`:
+
+```
+Pass 1: Compare adjacent pairs, swap if needed
+  [5, 3, 8, 1, 2] → 5>3, swap → [3, 5, 8, 1, 2]
+  [3, 5, 8, 1, 2] → 5<8, no swap
+  [3, 5, 8, 1, 2] → 8>1, swap → [3, 5, 1, 8, 2]
+  [3, 5, 1, 8, 2] → 8>2, swap → [3, 5, 1, 2, 8]
+  ✓ 8 is now in its final position
+
+Pass 2: (ignore last element, it's already placed)
+  [3, 5, 1, 2, 8] → 3<5, no swap
+  [3, 5, 1, 2, 8] → 5>1, swap → [3, 1, 5, 2, 8]
+  [3, 1, 5, 2, 8] → 5>2, swap → [3, 1, 2, 5, 8]
+  ✓ 5 is now in its final position
+
+Pass 3:
+  [3, 1, 2, 5, 8] → 3>1, swap → [1, 3, 2, 5, 8]
+  [1, 3, 2, 5, 8] → 3>2, swap → [1, 2, 3, 5, 8]
+  ✓ 3 is now in its final position
+
+Pass 4:
+  [1, 2, 3, 5, 8] → 1<2, no swap
+  ✓ No swaps happened → array is sorted, break early!
+
+Result: [1, 2, 3, 5, 8]
+```
+
+### Why Is Bubble Sort O(n^2)?
+
+Count the work. On the first pass, you make `n-1` comparisons. On the second, `n-2`. On the third, `n-3`. In the worst case (reverse-sorted input), you do all passes:
+
+```
+(n-1) + (n-2) + (n-3) + ... + 1 = n*(n-1)/2
+```
+
+For `n = 100`, that's `100 * 99 / 2 = 4,950` comparisons. For `n = 1000`, it's nearly 500,000. For `n = 10,000`, nearly 50 million. The work grows with the *square* of the input size — double the input, quadruple the work.
+
+<Callout type="tip">
+The `swapped` flag is an optimization: if no swaps occur in a pass, the array is already sorted. This makes the best case O(n) for already-sorted input.
+</Callout>
+
+## Selection Sort
+
+Selection sort takes a different approach. Instead of bubbling elements up through swaps, it **selects** the minimum element from the unsorted portion and places it at the front.
+
+Think of sorting a hand of cards by *finding* the smallest card each time: scan the entire hand, find the smallest card, pull it out and place it on the left. Now scan the remaining cards for the next smallest. Repeat.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void selection_sort(int arr[], int n) {
+    for (int i = 0; i < n - 1; i++) {
+        int min_idx = i;
+        for (int j = i + 1; j < n; j++) {
+            if (arr[j] < arr[min_idx]) {
+                min_idx = j;
+            }
+        }
+        if (min_idx != i) {
+            int temp = arr[i];
+            arr[i] = arr[min_idx];
+            arr[min_idx] = temp;
+        }
+    }
+}
+
+int main() {
+    int arr[] = {64, 25, 12, 22, 11};
+    int n = 5;
+
+    selection_sort(arr, n);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n²)" space="O(1)" />
+
+<Complexity time="O(n²)" space="O(1)" />
+
+### Trace Walkthrough
+
+Trace on `{64, 25, 12, 22, 11}`:
+
+```
+Pass 1: Find minimum in [64, 25, 12, 22, 11]
+         Minimum is 11 at index 4
+         Swap arr[0] and arr[4] → [11, 25, 12, 22, 64]
+         ✓ Position 0 is final
+
+Pass 2: Find minimum in [25, 12, 22, 64]
+         Minimum is 12 at index 2
+         Swap arr[1] and arr[2] → [11, 12, 25, 22, 64]
+         ✓ Position 1 is final
+
+Pass 3: Find minimum in [25, 22, 64]
+         Minimum is 22 at index 3
+         Swap arr[2] and arr[3] → [11, 12, 22, 25, 64]
+         ✓ Position 2 is final
+
+Pass 4: Find minimum in [25, 64]
+         Minimum is 25 at index 3
+         No swap needed → [11, 12, 22, 25, 64]
+         ✓ Position 3 is final
+
+Result: [11, 12, 22, 25, 64]
+```
+
+### Why Fewer Swaps Matter
+
+Selection sort always does `O(n^2)` comparisons — no matter what the input looks like (sorted, reverse-sorted, random), it always scans the remaining array to find the minimum. So it's never faster than O(n^2) for comparisons.
+
+But here's the key difference from bubble sort: it does **at most `n - 1` swaps** — exactly one per pass. Bubble sort can do up to `O(n^2)` swaps.
+
+Why does this matter? In most cases, it doesn't — swapping integers is cheap. But if you're sorting objects where each swap involves copying a large chunk of memory (big structs, for instance), fewer swaps means less data movement. Selection sort minimizes writes to the array.
+
+## Insertion Sort
+
+Insertion sort builds the sorted portion of the array one element at a time. It picks the next unsorted element and *inserts* it into its correct position among the already-sorted elements by shifting larger elements to the right.
+
+This is how most people sort playing cards. You hold a sorted hand in your left hand. You pick up a new card with your right hand and slide it into the correct slot — shifting the other cards over to make room.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void insertion_sort(int arr[], int n) {
+    for (int i = 1; i < n; i++) {
+        int key = arr[i];
+        int j = i - 1;
+
+        // Shift elements greater than key to the right
+        while (j >= 0 && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j--;
+        }
+        arr[j + 1] = key;
+    }
+}
+
+int main() {
+    int arr[] = {12, 11, 13, 5, 6};
+    int n = 5;
+
+    insertion_sort(arr, n);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n²)" space="O(1)" />
+
+<Complexity time="O(n²) worst, O(n) best" space="O(1)" />
+
+### Trace Walkthrough
+
+Trace on `{12, 11, 13, 5, 6}`. The `|` separates the sorted portion (left) from unsorted (right):
+
+```
+Start:  [12 | 11, 13, 5, 6]
+
+Step 1: key = 11. Compare with 12. 12 > 11, shift right.
+        Insert 11 at position 0.
+        [11, 12 | 13, 5, 6]
+
+Step 2: key = 13. Compare with 12. 12 < 13, stop.
+        13 is already in the right place.
+        [11, 12, 13 | 5, 6]
+
+Step 3: key = 5. Compare with 13: shift. Compare with 12: shift.
+        Compare with 11: shift. No more elements.
+        Insert 5 at position 0.
+        [5, 11, 12, 13 | 6]
+
+Step 4: key = 6. Compare with 13: shift. Compare with 12: shift.
+        Compare with 11: shift. Compare with 5: 5 < 6, stop.
+        Insert 6 at position 1.
+        [5, 6, 11, 12, 13]
+
+Result: [5, 6, 11, 12, 13]
+```
+
+### Why Insertion Sort Shines on Nearly-Sorted Data
+
+Here's the key insight: the inner `while` loop only runs when `arr[j] > key` — that is, when elements to the left are *out of order* relative to the new element. If the array is already sorted, the inner loop **never executes** — each element is already in its correct position, and insertion sort just verifies this in O(n) total time.
+
+Now consider a "nearly sorted" array — one where each element is at most a few positions from its final spot. The inner loop runs only a few times per element, making the total work proportional to `n` times a small constant. Contrast this with bubble sort, which still makes full passes even on nearly-sorted data (though it can detect and break early), and selection sort, which scans the entire unsorted portion regardless.
+
+This makes insertion sort the go-to choice for:
+- Small arrays (the overhead of fancier algorithms isn't worth it)
+- Arrays that are already mostly sorted (incremental updates, appending new data)
+- As the base case inside more complex algorithms (many implementations of quicksort and merge sort switch to insertion sort for small sub-arrays)
+
+<Callout type="info">
+Insertion sort is the best of the three for nearly-sorted data — it's O(n) in the best case. It's also the algorithm most people use when sorting a hand of playing cards.
+</Callout>
+
+## When to Use Which
+
+All three are O(n^2) worst-case, so none should be used for large datasets. But they each have situations where they're the right tool:
+
+| Scenario | Best choice | Why |
+|----------|-------------|-----|
+| Small array (< 20 elements) | Insertion sort | Low overhead, fast in practice |
+| Nearly-sorted data | Insertion sort | O(n) best case, minimal work per element |
+| Minimize memory writes | Selection sort | At most n-1 swaps |
+| Need to detect already-sorted data | Bubble sort | Breaks early with `swapped` flag |
+| Need a stable sort | Bubble or Insertion | Both preserve relative order of equal elements |
+| Learning how sorting works | Any of them | Simple enough to trace by hand |
+
+For anything bigger than a few dozen elements, you'll want merge sort or quicksort (coming up next). But understanding these simple sorts builds the mental foundation for understanding *why* the faster algorithms are faster.
+
+## Comparison
+
+| Algorithm | Best | Average | Worst | Stable? |
+|-----------|------|---------|-------|---------|
+| Bubble | O(n) | O(n²) | O(n²) | Yes |
+| Selection | O(n²) | O(n²) | O(n²) | No |
+| Insertion | O(n) | O(n²) | O(n²) | Yes |
+
+**Stable** means equal elements preserve their original relative order. For example, if you sort `[(Alice, 90), (Bob, 90)]` by score, a stable sort guarantees Alice stays before Bob. Bubble sort and insertion sort are stable; selection sort is not (swapping can displace equal elements).
+
+## Exercise: Bubble Sort
+
+<Exercise
+  title="Sort with bubble sort"
+  description="Read N, then N integers. Sort them using bubble sort and print the sorted array space-separated."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Bubble sort the array
+    // Print sorted
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n64 34 25 12 22", expected_stdout: "12 22 25 34 64\n" },
+    { stdin: "3\n1 2 3", expected_stdout: "1 2 3\n" },
+    { stdin: "4\n4 3 2 1", expected_stdout: "1 2 3 4\n" }
+  ]}
+  hints={[
+    "Outer loop: i from 0 to n-2.",
+    "Inner loop: j from 0 to n-2-i.",
+    "Swap arr[j] and arr[j+1] if arr[j] > arr[j+1]."
+  ]}
+/>
+
+## Exercise: Insertion Sort
+
+<Exercise
+  title="Sort with insertion sort"
+  description="Read N, then N integers. Sort using insertion sort and print sorted."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Insertion sort
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n5 2 4 6 1 3", expected_stdout: "1 2 3 4 5 6\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "4\n-3 -1 -4 -2", expected_stdout: "-4 -3 -2 -1\n" }
+  ]}
+  hints={[
+    "Start from index 1. Save arr[i] as 'key'.",
+    "Shift elements arr[j] to the right while they're greater than key.",
+    "Place key in its correct position."
+  ]}
+/>
+
+## Exercise: Sort and Find Median
+
+<Exercise
+  title="Find the median"
+  description="Read N (odd number), then N integers. Sort them and print the median (middle element)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Sort and print the median
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n3 1 4 1 5", expected_stdout: "3\n" },
+    { stdin: "7\n7 6 5 4 3 2 1", expected_stdout: "4\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "Sort the array using any method.",
+    "The median of an odd-length array is at index n/2.",
+    "Print arr[n/2] after sorting."
+  ]}
+/>
+
+## What's Next
+
+These O(n²) sorts are too slow for large data. Next: **merge sort** — our first O(n log n) algorithm using divide-and-conquer.

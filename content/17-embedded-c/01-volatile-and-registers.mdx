@@ -1,0 +1,267 @@
+---
+title: "Volatile and Registers"
+module: "Embedded & Constrained C"
+order: 1
+description: "Understand the volatile keyword, memory-mapped I/O, and how hardware registers work in C."
+difficulty: "advanced"
+---
+
+Here's something that trips up every embedded programmer sooner or later: you write a perfectly logical loop that polls a hardware register, compile it, flash it to the chip — and the loop never exits. The debugger shows the register changing, but the program acts like it's stuck on the initial value. You check the wiring, check the datasheet, check everything — then spend hours before realizing the **compiler optimized away your read**.
+
+This happens because C compilers are aggressively smart. When the compiler sees you reading a variable inside a loop and nothing in the loop modifies that variable, it concludes: "this value can't change, so I'll just read it once and cache the result in a CPU register." For normal variables, this optimization is brilliant — it makes your code faster. For hardware registers, it's catastrophic.
+
+## Why volatile Exists: The Window vs. the Painting
+
+Think of a normal variable as a **painting on the wall**. Once the compiler looks at it, the image doesn't change on its own — the only way it changes is if your code explicitly paints over it. So the compiler can safely remember what it saw and skip looking again.
+
+A `volatile` variable is like a **window**. Every time you look through it, the scene might be different — a car might have passed, a bird might have landed. The view changes for reasons completely outside your program's control: hardware, interrupts, other threads. The `volatile` keyword tells the compiler: "this is a window, not a painting — you MUST look every time I ask you to look."
+
+<Editor defaultCode={`#include <stdio.h>
+
+// WITHOUT volatile, the compiler might optimize this:
+//   while (*status_register == 0) { }
+// into:
+//   if (*status_register == 0) { while(1) {} }
+//
+// Because "nothing in the loop changes status_register"
+// (the compiler doesn't know hardware changes it)
+
+// WITH volatile:
+//   volatile int *status_register = (volatile int*)0x40001000;
+//   while (*status_register == 0) { }  // Reads memory EVERY iteration
+
+int main() {
+    printf("=== The volatile Keyword ===\\n\\n");
+
+    printf("volatile tells the compiler:\\n");
+    printf("  1. Don't cache this value in a register\\n");
+    printf("  2. Don't reorder reads/writes to it\\n");
+    printf("  3. Always read from actual memory\\n\\n");
+
+    printf("Use volatile for:\\n");
+    printf("  - Hardware registers (memory-mapped I/O)\\n");
+    printf("  - Variables shared with ISRs (interrupt handlers)\\n");
+    printf("  - Variables modified by signal handlers\\n");
+    printf("  - Memory-mapped peripherals\\n\\n");
+
+    // Demonstrate the effect
+    volatile int sensor = 0;
+    int non_volatile = 0;
+
+    // The compiler MUST read sensor each time
+    sensor = 42;
+    printf("volatile read: %d\\n", sensor);
+
+    // The compiler might optimize away redundant reads of non_volatile
+    non_volatile = 42;
+    printf("regular read: %d\\n", non_volatile);
+
+    return 0;
+}
+`} />
+
+## Memory-Mapped I/O
+
+On a desktop, you interact with hardware through the operating system — `open()`, `read()`, `write()`. On an embedded system, you interact with hardware by **reading and writing specific memory addresses**. The hardware designers wire the peripheral's control logic to appear at fixed addresses in the CPU's memory map. Writing `0xFF` to address `0x40020000` doesn't store a value in RAM — it configures GPIO pins as outputs. Reading from `0x40020010` doesn't fetch stored data — it reads the current voltage level on the pins.
+
+This is why `volatile` is essential. These "variables" aren't really variables at all — they're windows into hardware, and their values can change between any two instructions.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>
+
+// On a real microcontroller, registers are at fixed addresses:
+//   #define GPIO_PORT_A  (*(volatile uint32_t*)0x40020000)
+//   #define GPIO_PORT_A_DIR (*(volatile uint32_t*)0x40020004)
+//
+// Writing to these addresses controls hardware:
+//   GPIO_PORT_A_DIR = 0xFF;     // Set all pins as output
+//   GPIO_PORT_A = (1 << 5);     // Set pin 5 HIGH (turn on LED)
+//   GPIO_PORT_A &= ~(1 << 5);  // Set pin 5 LOW (turn off LED)
+
+// Simulated hardware registers
+typedef struct {
+    volatile uint32_t DATA;     // Data register
+    volatile uint32_t DIR;      // Direction (0=input, 1=output)
+    volatile uint32_t STATUS;   // Status flags
+    volatile uint32_t CONTROL;  // Control register
+} GPIO_TypeDef;
+
+// Simulate a GPIO port
+static uint32_t gpio_memory[4] = {0};
+GPIO_TypeDef *GPIOA = (GPIO_TypeDef*)gpio_memory;
+
+#define PIN_LED    5
+#define PIN_BUTTON 3
+
+void gpio_set_output(GPIO_TypeDef *port, int pin) {
+    port->DIR |= (1U << pin);
+}
+
+void gpio_set_input(GPIO_TypeDef *port, int pin) {
+    port->DIR &= ~(1U << pin);
+}
+
+void gpio_write(GPIO_TypeDef *port, int pin, int value) {
+    if (value)
+        port->DATA |= (1U << pin);
+    else
+        port->DATA &= ~(1U << pin);
+}
+
+int gpio_read(GPIO_TypeDef *port, int pin) {
+    return (port->DATA >> pin) & 1;
+}
+
+int main() {
+    printf("=== Memory-Mapped I/O Simulation ===\\n\\n");
+
+    // Configure pins
+    gpio_set_output(GPIOA, PIN_LED);
+    gpio_set_input(GPIOA, PIN_BUTTON);
+    printf("Pin %d: output (LED)\\n", PIN_LED);
+    printf("Pin %d: input (button)\\n", PIN_BUTTON);
+    printf("DIR register: 0x%08X\\n\\n", GPIOA->DIR);
+
+    // Toggle LED
+    gpio_write(GPIOA, PIN_LED, 1);
+    printf("LED ON:  DATA = 0x%08X, pin %d = %d\\n",
+           GPIOA->DATA, PIN_LED, gpio_read(GPIOA, PIN_LED));
+
+    gpio_write(GPIOA, PIN_LED, 0);
+    printf("LED OFF: DATA = 0x%08X, pin %d = %d\\n",
+           GPIOA->DATA, PIN_LED, gpio_read(GPIOA, PIN_LED));
+
+    // Simulate button press
+    GPIOA->DATA |= (1U << PIN_BUTTON);
+    printf("\\nButton pressed: pin %d = %d\\n",
+           PIN_BUTTON, gpio_read(GPIOA, PIN_BUTTON));
+
+    return 0;
+}
+`} />
+
+## Volatile with Interrupts
+
+The most common bug in embedded programming looks like this: you have a main loop polling a flag variable, and an interrupt service routine (ISR) that sets the flag when a hardware event occurs. Without `volatile`, the compiler sees that nothing in `main` ever sets the flag, so it caches the value and your main loop spins forever, blind to the interrupt.
+
+This is the fundamental pattern of interrupt-driven programming: the ISR is a separate "thread" of execution that the compiler doesn't know about. `volatile` bridges the gap, forcing the compiler to re-read the variable on every access.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <signal.h>
+
+// In embedded systems, interrupt service routines (ISRs) run
+// when hardware events occur. They share variables with main code.
+
+// THIS variable MUST be volatile — the ISR modifies it
+// and the main loop reads it
+volatile int flag = 0;
+
+// Simulated ISR (in real embedded code, this would be triggered by hardware)
+void simulated_isr(int signum) {
+    (void)signum;
+    flag = 1;  // Signal to main loop
+}
+
+int main() {
+    printf("=== Volatile with Interrupts ===\\n\\n");
+
+    printf("Pattern: ISR sets flag, main loop checks it\\n\\n");
+
+    printf("volatile int data_ready = 0;\\n\\n");
+
+    printf("// ISR (runs on hardware event):\\n");
+    printf("void UART_IRQHandler(void) {\\n");
+    printf("    buffer[idx++] = UART->DATA;\\n");
+    printf("    data_ready = 1;  // Signal main\\n");
+    printf("}\\n\\n");
+
+    printf("// Main loop:\\n");
+    printf("while (1) {\\n");
+    printf("    if (data_ready) {\\n");
+    printf("        process(buffer);\\n");
+    printf("        data_ready = 0;\\n");
+    printf("    }\\n");
+    printf("}\\n\\n");
+
+    // Demonstrate with simulated interrupt
+    printf("Simulating: flag = %d (initial)\\n", flag);
+    simulated_isr(0);  // Simulate interrupt
+    printf("After ISR:  flag = %d\\n", flag);
+
+    if (flag) {
+        printf("Main loop detected the flag!\\n");
+        flag = 0;
+    }
+
+    printf("After reset: flag = %d\\n", flag);
+
+    return 0;
+}
+`} />
+
+<Callout type="warning">
+`volatile` does NOT provide atomicity or thread safety. It prevents only one thing: compiler optimization of reads and writes. It does NOT prevent the CPU from reordering memory accesses (you need memory barriers for that), and it does NOT make multi-byte operations atomic (you need `_Atomic` or mutexes for that). For POSIX threads, `volatile` is almost never what you want — use proper synchronization primitives. `volatile` is specifically for hardware registers, signal handlers, and `setjmp`/`longjmp`.
+</Callout>
+
+## When volatile is NOT Enough
+
+A common misconception is that `volatile` makes a variable "safe" for concurrent access. It doesn't. Consider `volatile int counter = 0;` incremented by two ISRs: the operation `counter++` involves a read, an add, and a write. An interrupt can fire between the read and the write, and you lose an increment. `volatile` guarantees the compiler doesn't optimize away the access, but it doesn't guarantee the increment is atomic.
+
+For ISR-shared variables larger than the CPU's natural word size, or for read-modify-write sequences, you need to disable interrupts around the access. For multi-threaded code on desktop/server, use `_Atomic` types from `<stdatomic.h>` — they provide both the "don't optimize" guarantee AND atomicity AND proper memory ordering.
+
+## Exercise: Register Bit Manipulation
+
+<Exercise
+  title="Hardware register operations"
+  description="Simulate a 32-bit hardware register. Read N operations: 'SET bit' (set bit to 1), 'CLR bit' (clear bit to 0), 'TOG bit' (toggle bit), 'READ bit' (print 0 or 1), 'DUMP' (print register as 8-digit hex). Initial register value is 0."
+  starterCode={`#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+int main() {
+    volatile uint32_t reg = 0;
+
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char op[8];
+        scanf("%7s", op);
+
+        if (strcmp(op, "SET") == 0) {
+            int bit; scanf("%d", &bit);
+            reg |= (1U << bit);
+        } else if (strcmp(op, "CLR") == 0) {
+            int bit; scanf("%d", &bit);
+            reg &= ~(1U << bit);
+        } else if (strcmp(op, "TOG") == 0) {
+            int bit; scanf("%d", &bit);
+            reg ^= (1U << bit);
+        } else if (strcmp(op, "READ") == 0) {
+            int bit; scanf("%d", &bit);
+            printf("%d\\n", (reg >> bit) & 1);
+        } else if (strcmp(op, "DUMP") == 0) {
+            printf("%08X\\n", reg);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\nSET 0\nSET 4\nDUMP\nREAD 0\nREAD 1", expected_stdout: "00000011\n1\n0\n" },
+    { stdin: "4\nSET 7\nTOG 7\nTOG 7\nDUMP", expected_stdout: "00000080\n" },
+    { stdin: "5\nSET 0\nSET 1\nSET 2\nCLR 1\nDUMP", expected_stdout: "00000005\n" },
+    { stdin: "3\nSET 31\nREAD 31\nDUMP", expected_stdout: "1\n80000000\n" }
+  ]}
+  hints={[
+    "SET: reg |= (1U << bit)",
+    "CLR: reg &= ~(1U << bit)",
+    "TOG: reg ^= (1U << bit)",
+    "READ: (reg >> bit) & 1"
+  ]}
+/>
+
+## What's Next
+
+Next: **Fixed-width types** — writing portable code with `stdint.h`.

@@ -1,0 +1,392 @@
+---
+title: "A Simple Shell"
+module: "Building Real Programs"
+order: 1
+description: "Build a minimal Unix shell that reads commands, forks processes, and handles built-in commands."
+difficulty: "advanced"
+---
+
+A shell is just a loop: read input, parse it, execute it. Let's build one.
+
+## The Read-Eval-Print Loop
+
+Every shell follows this pattern:
+
+```c
+while (1) {
+    print_prompt();
+    char *line = read_line();
+    char **args = parse_line(line);
+    execute(args);
+    free(line);
+    free(args);
+}
+```
+
+## Reading Input
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_LINE 1024
+
+char *read_line(void) {
+    char *line = malloc(MAX_LINE);
+    if (!line) {
+        perror("malloc");
+        exit(1);
+    }
+
+    printf("mysh> ");
+    fflush(stdout);
+
+    if (!fgets(line, MAX_LINE, stdin)) {
+        free(line);
+        return NULL;  // EOF (Ctrl+D)
+    }
+
+    // Remove trailing newline
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\\n') {
+        line[len - 1] = '\\0';
+    }
+
+    return line;
+}
+
+int main() {
+    // Simulate reading a command
+    char input[] = "ls -la /home";
+    printf("Input: '%s'\\n", input);
+    printf("Length: %zu\\n", strlen(input));
+    return 0;
+}
+`} />
+
+## Parsing: Tokenizing the Command
+
+Split the input string into an array of arguments:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_ARGS 64
+#define DELIMITERS " \\t\\r\\n"
+
+char **parse_line(char *line) {
+    char **args = malloc(MAX_ARGS * sizeof(char*));
+    if (!args) {
+        perror("malloc");
+        exit(1);
+    }
+
+    int i = 0;
+    char *token = strtok(line, DELIMITERS);
+    while (token != NULL && i < MAX_ARGS - 1) {
+        args[i++] = token;
+        token = strtok(NULL, DELIMITERS);
+    }
+    args[i] = NULL;  // execvp needs NULL-terminated array
+
+    return args;
+}
+
+int main() {
+    char line[] = "echo   hello    world";
+    char **args = parse_line(line);
+
+    printf("Parsed tokens:\\n");
+    for (int i = 0; args[i] != NULL; i++) {
+        printf("  [%d] '%s'\\n", i, args[i]);
+    }
+
+    free(args);
+    return 0;
+}
+`} />
+
+## Executing Commands with fork + exec
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int launch(char **args) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) {
+        // Child: replace with new program
+        execvp(args[0], args);
+        // If we get here, exec failed
+        perror(args[0]);
+        exit(127);
+    }
+
+    // Parent: wait for child
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+}
+
+int main() {
+    // Demonstrate the concept without actually forking
+    printf("Shell execution flow:\\n");
+    printf("1. fork() creates child process\\n");
+    printf("2. Child calls execvp(command, args)\\n");
+    printf("3. Parent calls waitpid() to wait\\n");
+    printf("4. Parent gets exit status\\n");
+
+    // Show how args would look for: ls -la /tmp
+    char *args[] = {"ls", "-la", "/tmp", NULL};
+    printf("\\nCommand: %s\\n", args[0]);
+    printf("Args: ");
+    for (int i = 0; args[i]; i++) printf("%s ", args[i]);
+    printf("\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+`execvp` searches `PATH` for the command. The `v` means it takes an argument vector (array), and `p` means it searches `PATH`. The child process is **replaced** entirely — code after `execvp` only runs if it fails.
+</Callout>
+
+## Built-in Commands
+
+Some commands must be handled by the shell itself — they can't be external programs:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+// Built-in command handlers
+int builtin_cd(char **args) {
+    if (args[1] == NULL) {
+        // cd with no args -> go home
+        const char *home = getenv("HOME");
+        if (home && chdir(home) != 0) perror("cd");
+    } else {
+        if (chdir(args[1]) != 0) perror("cd");
+    }
+    return 1;  // continue shell loop
+}
+
+int builtin_exit(char **args) {
+    (void)args;
+    return 0;  // signal to stop the loop
+}
+
+int builtin_pwd(char **args) {
+    (void)args;
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd))) {
+        printf("%s\\n", cwd);
+    } else {
+        perror("pwd");
+    }
+    return 1;
+}
+
+// Table of builtins
+typedef struct {
+    const char *name;
+    int (*func)(char **args);
+} Builtin;
+
+Builtin builtins[] = {
+    {"cd",   builtin_cd},
+    {"exit", builtin_exit},
+    {"pwd",  builtin_pwd},
+    {NULL, NULL}
+};
+
+int check_builtin(char **args) {
+    for (int i = 0; builtins[i].name != NULL; i++) {
+        if (strcmp(args[0], builtins[i].name) == 0) {
+            return builtins[i].func(args);
+        }
+    }
+    return -1;  // Not a builtin
+}
+
+int main() {
+    // Demonstrate the dispatch table pattern
+    printf("Built-in commands:\\n");
+    for (int i = 0; builtins[i].name; i++) {
+        printf("  %s\\n", builtins[i].name);
+    }
+
+    // Test with simulated commands
+    char *cmd1[] = {"pwd", NULL};
+    printf("\\nRunning 'pwd':\\n");
+    check_builtin(cmd1);
+
+    return 0;
+}
+`} />
+
+## Putting It Together
+
+Here's the complete mini-shell:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_LINE 1024
+#define MAX_ARGS 64
+#define DELIMITERS " \\t\\r\\n"
+
+// In the full shell, we'd also include:
+// <unistd.h> for fork, exec, chdir
+// <sys/wait.h> for waitpid
+
+char **parse_line(char *line) {
+    char **args = malloc(MAX_ARGS * sizeof(char*));
+    int i = 0;
+    char *token = strtok(line, DELIMITERS);
+    while (token && i < MAX_ARGS - 1) {
+        args[i++] = token;
+        token = strtok(NULL, DELIMITERS);
+    }
+    args[i] = NULL;
+    return args;
+}
+
+// Simulated execution (in real shell, uses fork+exec)
+int execute(char **args) {
+    if (!args[0]) return 1;  // Empty command
+
+    // Check builtins
+    if (strcmp(args[0], "exit") == 0) return 0;
+    if (strcmp(args[0], "echo") == 0) {
+        for (int i = 1; args[i]; i++) {
+            if (i > 1) printf(" ");
+            printf("%s", args[i]);
+        }
+        printf("\\n");
+        return 1;
+    }
+
+    printf("[Would fork+exec: %s]\\n", args[0]);
+    return 1;
+}
+
+int main() {
+    // Simulate shell with pre-defined inputs
+    char *inputs[] = {
+        "echo Hello from mysh!",
+        "echo The shell parses and executes",
+        "ls -la",
+        "exit",
+        NULL
+    };
+
+    for (int i = 0; inputs[i]; i++) {
+        char line[MAX_LINE];
+        strncpy(line, inputs[i], MAX_LINE - 1);
+        line[MAX_LINE - 1] = '\\0';
+
+        printf("mysh> %s\\n", line);
+        char **args = parse_line(line);
+        int cont = execute(args);
+        free(args);
+        if (!cont) {
+            printf("Goodbye!\\n");
+            break;
+        }
+    }
+
+    return 0;
+}
+`} />
+
+## Exercise: Command Parser
+
+<Exercise
+  title="Parse shell commands"
+  description="Read a single line of input. Print each whitespace-separated token on its own line, preceded by its index. Format: 'N:token' where N starts at 0. Ignore extra whitespace."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_LINE 1024
+
+int main() {
+    char line[MAX_LINE];
+    fgets(line, MAX_LINE, stdin);
+
+    // Remove trailing newline
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\\n') line[len - 1] = '\\0';
+
+    // TODO: tokenize and print each token
+    // Format: "0:token1", "1:token2", etc.
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "ls -la /tmp", expected_stdout: "0:ls\n1:-la\n2:/tmp\n" },
+    { stdin: "echo   hello    world", expected_stdout: "0:echo\n1:hello\n2:world\n" },
+    { stdin: "gcc -o main main.c -Wall", expected_stdout: "0:gcc\n1:-o\n2:main\n3:main.c\n4:-Wall\n" },
+    { stdin: "single", expected_stdout: "0:single\n" }
+  ]}
+  hints={[
+    "Use strtok() with \" \\t\" as delimiters.",
+    "Keep a counter that increments for each token.",
+    "strtok() handles multiple consecutive delimiters for you."
+  ]}
+/>
+
+## Exercise: Built-in Echo
+
+<Exercise
+  title="Implement echo"
+  description="Read a line of input. The first token is always 'echo'. Print the remaining tokens separated by single spaces, followed by a newline. If -n flag is the second token, don't print the trailing newline."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_LINE 1024
+
+int main() {
+    char line[MAX_LINE];
+    fgets(line, MAX_LINE, stdin);
+    size_t len = strlen(line);
+    if (len > 0 && line[len - 1] == '\\n') line[len - 1] = '\\0';
+
+    // TODO: Skip "echo", check for -n flag
+    // Print remaining args separated by spaces
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "echo hello world", expected_stdout: "hello world\n" },
+    { stdin: "echo -n no newline", expected_stdout: "no newline" },
+    { stdin: "echo one", expected_stdout: "one\n" },
+    { stdin: "echo   multiple   spaces", expected_stdout: "multiple spaces\n" }
+  ]}
+  hints={[
+    "Use strtok() to skip the first token ('echo').",
+    "Check if the next token is '-n' to suppress the newline.",
+    "Print spaces between tokens but not before the first one."
+  ]}
+/>
+
+## What's Next
+
+Next: building a **memory allocator** — implementing malloc and free from scratch.

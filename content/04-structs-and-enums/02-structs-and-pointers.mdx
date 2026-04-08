@@ -1,0 +1,141 @@
+---
+title: "Structs and Pointers"
+module: "Structs and Enums"
+order: 2
+description: "The arrow operator, struct pointers, and self-referential structs."
+difficulty: "intermediate"
+---
+
+In the last lesson you created structs and accessed their fields with the dot operator. But consider what happens when you pass a struct to a function:
+
+```c
+void print_student(struct Student s) {  // copies the ENTIRE struct
+    printf("%s\n", s.name);
+}
+```
+
+If `struct Student` contains a 100-character name array and 10 scores, that's over 140 bytes copied onto the stack every single time you call this function. For one call, that's fine. For a thousand calls in a loop? You're copying thousands of bytes for no reason.
+
+This is why almost all serious C code works with **pointers to structs** rather than structs by value. A pointer is just 8 bytes (on a 64-bit system) regardless of how large the struct is. Passing a pointer says "here's where the data lives" instead of "here's a full copy of the data."
+
+## The Arrow Operator
+
+When you have a pointer to a struct, you can't use the dot operator directly — `p.x` won't compile because `p` isn't a struct, it's an *address*. You'd have to dereference first: `(*p).x`. But this is so common in C that there's a shorthand: `p->x`.
+
+Think of `->` as "follow the arrow to the struct, then access the field." It's purely syntactic sugar — `p->x` means exactly `(*p).x` — but it's far more readable, especially when you chain multiple accesses.
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Point {\n    int x;\n    int y;\n};\n\nvoid move(struct Point *p, int dx, int dy) {\n    p->x += dx;  // Same as (*p).x += dx\n    p->y += dy;\n}\n\nint main() {\n    struct Point pt = {3, 7};\n    printf("Before: (%d, %d)\\n", pt.x, pt.y);\n    \n    move(&pt, 2, -1);\n    printf("After:  (%d, %d)\\n", pt.x, pt.y);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Notice something important: `move` modifies the *original* struct, not a copy. That's the whole point. When you pass a struct by pointer, the function can reach back and change the caller's data. When you pass by value, the function gets a private copy and the original stays untouched.
+
+This is a design decision you'll make constantly in C: do I want the function to *see and modify* the original, or do I want it to work on a *safe copy*?
+
+## Passing Structs by Pointer
+
+Let's make this concrete. Here's a `Student` struct with a name (100 bytes), an array of scores (40 bytes), and a count — over 140 bytes total. If you passed this by value to `average()`, those 140+ bytes get copied onto the stack. By passing a pointer, only 8 bytes (the address) get copied:
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Student {\n    char name[100];\n    int scores[10];\n    int num_scores;\n};\n\n// const pointer: read-only access\nfloat average(const struct Student *s) {\n    int sum = 0;\n    for (int i = 0; i < s->num_scores; i++) {\n        sum += s->scores[i];\n    }\n    return (float)sum / s->num_scores;\n}\n\nint main() {\n    struct Student alice = {"Alice", {90, 85, 92, 88}, 4};\n    printf("%s's average: %.1f\\n", alice.name, average(&alice));\n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+Use `const` when a function reads a struct but shouldn't modify it. `const struct Student *s` means you can read `s->name` but not write to it. This catches bugs at compile time — if you accidentally try to assign to a field, the compiler stops you. It's a promise to the caller: "I'll look, but I won't touch."
+</Callout>
+
+When should you pass by value instead? Almost never for large structs. Small structs (like a `Point` with two ints) are sometimes passed by value for simplicity, but the convention in C leans heavily toward pointers. You'll see `->` far more often than `.` in real-world codebases.
+
+## Dynamic Struct Allocation
+
+So far, our structs have lived on the stack — they're created inside a function and die when that function returns. But what if a function needs to *create* a struct and hand it back to the caller? You can't return a pointer to a local variable (it would be a dangling pointer). You need `malloc` to put the struct on the heap, where it survives beyond the function's lifetime.
+
+This pattern — "allocate, fill in, return" — is extremely common. It's how you build factory functions in C:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\nstruct Student {\n    char name[50];\n    int age;\n};\n\nstruct Student *create_student(const char *name, int age) {\n    struct Student *s = malloc(sizeof(struct Student));\n    if (s == NULL) return NULL;\n    \n    strncpy(s->name, name, 49);\n    s->name[49] = '\\0';\n    s->age = age;\n    \n    return s;\n}\n\nint main() {\n    struct Student *s = create_student("Bob", 21);\n    if (s == NULL) return 1;\n    \n    printf("%s, age %d\\n", s->name, s->age);\n    \n    free(s);\n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+The caller is responsible for calling `free(s)` when done. This is a fundamental contract in C: whoever allocates memory must ensure it gets freed. Forget this and you leak memory. Free it twice and you corrupt the heap. The discipline required here is exactly why higher-level languages added garbage collection — but in C, you have full control and full responsibility.
+
+## Self-Referential Structs
+
+Here's a puzzle: can a struct contain *itself* as a field?
+
+```c
+struct Node {
+    int value;
+    struct Node next;  // ERROR: infinite size!
+};
+```
+
+No. The compiler needs to know how big `struct Node` is, and if it contains a full `struct Node`, the size becomes infinite — it's turtles all the way down.
+
+But a struct *can* contain a **pointer to itself**. A pointer is always the same size (8 bytes on 64-bit systems) regardless of what it points to:
+
+```c
+struct Node {
+    int value;
+    struct Node *next;  // OK: just 8 bytes for the address
+};
+```
+
+This is a profound idea. A `Node` holds a value and knows where the *next* `Node` lives. Chain a few together and you have a linked list. Add a `left` and `right` pointer and you have a tree. Add an arbitrary list of pointers and you have a graph. Almost every complex data structure in C is built from self-referential structs.
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdlib.h>\n\nstruct Node {\n    int value;\n    struct Node *next;  // Pointer to another Node\n};\n\nint main() {\n    // Create a simple chain: 10 -> 20 -> 30\n    struct Node a = {10, NULL};\n    struct Node b = {20, NULL};\n    struct Node c = {30, NULL};\n    \n    a.next = &b;\n    b.next = &c;\n    \n    // Walk the chain\n    struct Node *current = &a;\n    while (current != NULL) {\n        printf("%d ", current->value);\n        current = current->next;\n    }\n    printf("\\n");\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+Walk through what happens step by step: `current` starts pointing at `a`. We print `a.value` (10), then set `current = a.next`, which points to `b`. Print `b.value` (20), move to `b.next` which points to `c`. Print `c.value` (30), move to `c.next` which is `NULL`. The loop ends.
+
+<Callout type="info">
+Notice you must use `struct Node *next` (a pointer), not `struct Node next`. A struct can't contain itself (infinite size!), but it can contain a pointer to itself (just 8 bytes for the address). This asymmetry — "I can't hold you, but I can remember where you live" — is the key insight behind all linked data structures.
+</Callout>
+
+The `NULL` at the end of the chain is critical. Without it, following `next` on the last node would be undefined behavior — you'd be reading whatever garbage happens to be in memory. `NULL` acts as a sentinel: "stop here, there's nothing more."
+
+## Exercise: Modify Through Pointer
+
+<Exercise
+  title="Double the score"
+  description="Define a struct with name (string) and score (int). Read a name and score. Write a function that doubles the score through a pointer. Print the result."
+  starterCode={`#include <stdio.h>\n\nstruct Player {\n    char name[50];\n    int score;\n};\n\nvoid double_score(struct Player *p) {\n    // Double p's score\n}\n\nint main() {\n    struct Player p;\n    scanf("%s %d", p.name, &p.score);\n    \n    double_score(&p);\n    \n    printf("%s %d\\n", p.name, p.score);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "Alice 50", expected_stdout: "Alice 100\n" },
+    { stdin: "Bob 0", expected_stdout: "Bob 0\n" },
+    { stdin: "Charlie 25", expected_stdout: "Charlie 50\n" }
+  ]}
+  hints={[
+    "Use the arrow operator: p->score *= 2;",
+    "Or equivalently: (*p).score *= 2;"
+  ]}
+/>
+
+## Exercise: Dynamic Array of Structs
+
+<Exercise
+  title="Build student list"
+  description="Read N, then N student records (name and score). Dynamically allocate the array. Print each student in 'name: score' format."
+  starterCode={`#include <stdio.h>\n#include <stdlib.h>\n\nstruct Student {\n    char name[50];\n    int score;\n};\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    struct Student *students = malloc(n * sizeof(struct Student));\n    if (students == NULL) return 1;\n    \n    for (int i = 0; i < n; i++) {\n        scanf("%s %d", students[i].name, &students[i].score);\n    }\n    \n    // Print each student\n    \n    free(students);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3\nAlice 90\nBob 85\nCharlie 92", expected_stdout: "Alice: 90\nBob: 85\nCharlie: 92\n" },
+    { stdin: "1\nDan 100", expected_stdout: "Dan: 100\n" }
+  ]}
+  hints={[
+    "Loop through and print: printf(\"%s: %d\\n\", students[i].name, students[i].score);",
+    "Use -> if you have a pointer, or . if you have the struct directly. students[i] is a struct, so use dot."
+  ]}
+/>
+
+## Exercise: Linked Chain Sum
+
+<Exercise
+  title="Sum of a chain"
+  description="Read N integers. Build a chain of Node structs (on the stack, like the example above) by storing them in an array. Print the sum by traversing the chain."
+  starterCode={`#include <stdio.h>\n\nstruct Node {\n    int value;\n    struct Node *next;\n};\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    struct Node nodes[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%d", &nodes[i].value);\n        nodes[i].next = (i < n - 1) ? &nodes[i + 1] : NULL;\n    }\n    \n    // Traverse the chain and compute the sum\n    int sum = 0;\n    struct Node *current = &nodes[0];\n    while (current != NULL) {\n        // Add current value to sum and move to next\n        current = current->next;\n    }\n    \n    printf("%d\\n", sum);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "4\n10 20 30 40", expected_stdout: "100\n" },
+    { stdin: "3\n5 5 5", expected_stdout: "15\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "Add the current node's value to sum: sum += current->value;",
+    "The traversal loop is already set up — you just need to accumulate the sum."
+  ]}
+/>
+
+## What's Next
+
+Let's look at **typedef, enums, unions, and bitfields** — more ways to define custom types in C.

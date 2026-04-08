@@ -1,0 +1,6 @@
+{
+  "title": "System Calls & Processes",
+  "order": 11,
+  "phase": 4,
+  "description": "How programs interact with the operating system — system calls, processes, and signals."
+}

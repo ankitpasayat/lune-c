@@ -1,0 +1,6 @@
+{
+  "title": "Sorting & Searching",
+  "order": 7,
+  "phase": 2,
+  "description": "Classic algorithms for finding and ordering data — from linear scan to divide-and-conquer."
+}

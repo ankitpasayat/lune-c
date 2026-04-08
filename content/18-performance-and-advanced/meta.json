@@ -1,0 +1,6 @@
+{
+  "title": "Performance & Advanced C",
+  "order": 18,
+  "phase": 6,
+  "description": "Master cache optimization, function pointers, SIMD concepts, and modern C standards."
+}

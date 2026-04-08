@@ -1,0 +1,317 @@
+---
+title: "SIMD and Vectorization"
+module: "Performance & Advanced C"
+order: 3
+description: "Understand SIMD concepts, auto-vectorization, and basic intrinsics for parallel computation."
+difficulty: "advanced"
+---
+
+Imagine you need to add two arrays of a million floats. The naive approach: load one pair, add them, store the result, repeat a million times. But think about what the CPU is doing — it has huge, wide execution units sitting mostly idle, processing one tiny 32-bit float at a time through hardware capable of handling 128 or 256 bits at once.
+
+SIMD (**Single Instruction, Multiple Data**) fixes this waste. Instead of processing one element per instruction, a single SIMD instruction processes 4, 8, or even 16 elements simultaneously. Same operation, multiple data points, one clock cycle. It's not multi-threading (that's task-level parallelism) — it's **data-level parallelism** within a single core.
+
+Think of it like an assembly line. A scalar CPU is one worker building one widget at a time. A SIMD CPU is the same worker with a jig that lets them build 4 identical widgets in the same motion. The work per widget doesn't change, but throughput multiplies.
+
+## What is SIMD?
+
+Here's the core idea. Scalar code issues one operation per instruction:
+
+```
+a[0] += b[0]   // instruction 1
+a[1] += b[1]   // instruction 2
+a[2] += b[2]   // instruction 3
+a[3] += b[3]   // instruction 4
+```
+
+SIMD packs all four into one:
+
+```
+a[0:3] += b[0:3]   // 1 instruction, 4 operations
+```
+
+Every modern CPU supports some form of SIMD. Intel/AMD processors provide **SSE** (128-bit: 4 floats at once), **AVX** (256-bit: 8 floats), and **AVX-512** (512-bit: 16 floats). ARM processors have **NEON** (128-bit). The exact instruction set varies, but the concept is universal.
+
+There are three ways to use SIMD in your C code, from easiest to hardest:
+
+1. **Auto-vectorization** — write clean loops and let the compiler generate SIMD instructions for you. This is the preferred approach.
+2. **Intrinsics** — call C functions that map 1-to-1 to SIMD instructions. More control, less portable.
+3. **Inline assembly** — write raw SIMD assembly. Rarely needed, basically never recommended.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    printf("=== SIMD: Single Instruction, Multiple Data ===\\n\\n");
+
+    printf("Scalar (normal):  One operation at a time\\n");
+    printf("  a[0] += b[0]\\n");
+    printf("  a[1] += b[1]\\n");
+    printf("  a[2] += b[2]\\n");
+    printf("  a[3] += b[3]   (4 instructions)\\n\\n");
+
+    printf("SIMD (vector):    4 operations at once\\n");
+    printf("  a[0:3] += b[0:3]  (1 instruction!)\\n\\n");
+
+    printf("Common SIMD instruction sets:\\n");
+    printf("  SSE   — 128-bit (4 floats or 4 ints)\\n");
+    printf("  AVX   — 256-bit (8 floats or 8 ints)\\n");
+    printf("  AVX-512 — 512-bit (16 floats)\\n");
+    printf("  NEON  — 128-bit (ARM processors)\\n\\n");
+
+    printf("Three ways to use SIMD:\\n");
+    printf("  1. Auto-vectorization (compiler does it)\\n");
+    printf("  2. Intrinsics (C functions for SIMD)\\n");
+    printf("  3. Inline assembly (rarely needed)\\n");
+
+    return 0;
+}
+`} />
+
+## Auto-Vectorization: Let the Compiler Do the Work
+
+The best SIMD code is code you didn't have to write. Modern compilers (GCC, Clang, MSVC) can analyze your loops and automatically emit SIMD instructions — a process called **auto-vectorization.** But the compiler can only do this when your loop is "vectorization-friendly." That means:
+
+- **No loop-carried dependencies.** Each iteration must be independent. `c[i] = a[i] + b[i]` is perfect — iteration `i` doesn't depend on iteration `i-1`. But `a[i] = a[i-1] + 1` is a chain — every iteration depends on the previous one, and the compiler can't parallelize that.
+- **No branches inside the loop.** `if/else` inside a loop forces different elements down different paths, which fights the "single instruction" part of SIMD. Some branches can be converted to conditional moves, but complex branches kill vectorization.
+- **Simple, predictable access patterns.** Sequential array access, ideally with stride 1. Random access (pointer chasing, hash lookups) can't be vectorized.
+- **Use `restrict` pointers** to promise the compiler that arrays don't overlap (aliasing). Without this promise, the compiler must assume `a` and `c` might point to the same memory and can't reorder operations.
+
+Compile with `-O2 -march=native` to enable auto-vectorization. Use `-fopt-info-vec-optimized` (GCC) to see which loops were vectorized, or `-fopt-info-vec-missed` to understand why others weren't.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <time.h>
+
+#define N (1024 * 1024)
+
+float a[N], b[N], c[N];
+
+// The compiler can auto-vectorize this simple loop!
+// Compile with: gcc -O2 -march=native -ftree-vectorize
+void vector_add(void) {
+    for (int i = 0; i < N; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// This is harder to vectorize (data dependency)
+void prefix_sum(float *arr, int n) {
+    for (int i = 1; i < n; i++) {
+        arr[i] += arr[i - 1];  // Each element depends on previous
+    }
+}
+
+int main() {
+    // Initialize
+    for (int i = 0; i < N; i++) {
+        a[i] = (float)i;
+        b[i] = (float)(N - i);
+    }
+
+    printf("=== Auto-Vectorization ===\\n\\n");
+
+    clock_t t = clock();
+    for (int iter = 0; iter < 100; iter++) {
+        vector_add();
+    }
+    double time = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    printf("vector_add: %.4fs for 100 iterations\\n", time);
+    printf("Result check: c[0]=%.0f, c[%d]=%.0f\\n", c[0], N-1, c[N-1]);
+
+    printf("\\nHints for auto-vectorization:\\n");
+    printf("  - Use -O2 or -O3 with -march=native\\n");
+    printf("  - Use simple loops with no dependencies\\n");
+    printf("  - Avoid branches inside loops\\n");
+    printf("  - Use aligned arrays (or restrict pointers)\\n");
+    printf("  - Check: gcc -fopt-info-vec-optimized\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+To see if the compiler vectorized your loop, use: `gcc -O2 -march=native -fopt-info-vec-optimized -c file.c`. It prints which loops were vectorized. You can also use `-fopt-info-vec-missed` to see why certain loops were NOT vectorized.
+</Callout>
+
+## Intrinsics: Manual SIMD
+
+When auto-vectorization isn't enough — maybe you need a specific instruction the compiler doesn't emit, or you need guaranteed SIMD for a critical path — you use **intrinsics**. These are C functions that map directly to CPU instructions. The compiler understands them and handles register allocation, but you control exactly which SIMD operations execute.
+
+**Data alignment matters here.** SIMD load/store instructions often require (or perform much better with) data aligned to 16 bytes (SSE) or 32 bytes (AVX). Misaligned access may work but costs extra cycles on some architectures. Use `_mm_loadu_ps` for unaligned data and `_mm_load_ps` for aligned data. Allocate aligned memory with `aligned_alloc(32, size)` in C11 or compiler-specific attributes.
+
+The naming convention for intrinsics is systematic: `_mm` means SSE (128-bit), `_mm256` means AVX (256-bit). The suffix tells you the data type: `_ps` = packed single (float), `_pd` = packed double, `_epi32` = packed 32-bit integers.
+
+In practice, you rarely need raw intrinsics. Auto-vectorization covers 80%+ of cases. Intrinsics are for the last mile: codecs, crypto, physics engines, scientific computing — places where you need every cycle.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// SSE intrinsics example (conceptual)
+// #include <immintrin.h>  // For SSE/AVX intrinsics
+//
+// void add_arrays_sse(float *a, float *b, float *c, int n) {
+//     for (int i = 0; i < n; i += 4) {
+//         __m128 va = _mm_load_ps(&a[i]);   // Load 4 floats
+//         __m128 vb = _mm_load_ps(&b[i]);   // Load 4 floats
+//         __m128 vc = _mm_add_ps(va, vb);   // Add 4 pairs
+//         _mm_store_ps(&c[i], vc);          // Store 4 results
+//     }
+// }
+//
+// AVX version (8 floats at once):
+// void add_arrays_avx(float *a, float *b, float *c, int n) {
+//     for (int i = 0; i < n; i += 8) {
+//         __m256 va = _mm256_load_ps(&a[i]);
+//         __m256 vb = _mm256_load_ps(&b[i]);
+//         __m256 vc = _mm256_add_ps(va, vb);
+//         _mm256_store_ps(&c[i], vc);
+//     }
+// }
+
+int main() {
+    printf("=== SIMD Intrinsics ===\\n\\n");
+
+    printf("SSE Types (128-bit):\\n");
+    printf("  __m128  — 4 x float\\n");
+    printf("  __m128d — 2 x double\\n");
+    printf("  __m128i — 4 x int32 (or 8 x int16, etc.)\\n\\n");
+
+    printf("AVX Types (256-bit):\\n");
+    printf("  __m256  — 8 x float\\n");
+    printf("  __m256d — 4 x double\\n");
+    printf("  __m256i — 8 x int32\\n\\n");
+
+    printf("Common operations:\\n");
+    printf("  _mm_load_ps   — Load 4 floats (aligned)\\n");
+    printf("  _mm_add_ps    — Add 4 float pairs\\n");
+    printf("  _mm_mul_ps    — Multiply 4 float pairs\\n");
+    printf("  _mm_store_ps  — Store 4 floats\\n\\n");
+
+    printf("Naming convention: _mm[256]_op_type\\n");
+    printf("  _mm = SSE (128-bit)\\n");
+    printf("  _mm256 = AVX (256-bit)\\n");
+    printf("  _ps = packed single (float)\\n");
+    printf("  _pd = packed double\\n");
+    printf("  _epi32 = packed 32-bit int\\n");
+
+    return 0;
+}
+`} />
+
+## Practical: Dot Product
+
+Loop unrolling is a technique that helps the CPU (and compiler) exploit SIMD and instruction-level parallelism. By manually unrolling a loop into multiple independent accumulators, you break the dependency chain — each `sumN` variable is independent, so the CPU can compute them in parallel using separate execution units.
+
+This is also a common pattern for SIMD: accumulate into 4 (or 8) independent sums, then reduce at the end. It maps naturally to a 128-bit SSE register holding 4 floats.
+
+**When does SIMD help?** Anywhere you do the same operation across large arrays of data: image processing (apply a filter to millions of pixels), audio processing (mix audio samples), scientific computing (matrix multiplication), machine learning (vector math), compression, and cryptography.
+
+**When does SIMD NOT help?** Branch-heavy code (decision trees, interpreters), pointer-chasing (linked lists, graphs), or operations where each element needs different treatment. SIMD means *single instruction* — if different elements need different instructions, you're fighting the hardware.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <time.h>
+
+#define N (1024 * 1024)
+
+float x[N], y[N];
+
+// Scalar dot product
+float dot_scalar(const float *a, const float *b, int n) {
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        sum += a[i] * b[i];
+    }
+    return sum;
+}
+
+// Unrolled dot product (compiler can vectorize this better)
+float dot_unrolled(const float *a, const float *b, int n) {
+    float sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+    int i = 0;
+    for (; i + 3 < n; i += 4) {
+        sum0 += a[i]   * b[i];
+        sum1 += a[i+1] * b[i+1];
+        sum2 += a[i+2] * b[i+2];
+        sum3 += a[i+3] * b[i+3];
+    }
+    // Handle remainder
+    for (; i < n; i++) sum0 += a[i] * b[i];
+    return sum0 + sum1 + sum2 + sum3;
+}
+
+int main() {
+    for (int i = 0; i < N; i++) {
+        x[i] = 1.0f / (i + 1);
+        y[i] = 1.0f * (i + 1);
+    }
+
+    clock_t t;
+
+    t = clock();
+    float r1 = 0;
+    for (int iter = 0; iter < 100; iter++) r1 = dot_scalar(x, y, N);
+    double t1 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    t = clock();
+    float r2 = 0;
+    for (int iter = 0; iter < 100; iter++) r2 = dot_unrolled(x, y, N);
+    double t2 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    printf("Scalar:   result=%.2f, time=%.4fs\\n", r1, t1);
+    printf("Unrolled: result=%.2f, time=%.4fs\\n", r2, t2);
+    printf("\\nLoop unrolling reduces loop overhead and\\n");
+    printf("allows the CPU to use multiple execution units.\\n");
+
+    return 0;
+}
+`} />
+
+## Exercise: Vectorizable Loop
+
+<Exercise
+  title="Element-wise operations"
+  description="Read N, then N integers as array A, then N integers as array B. Read an operation: '+', '-', or '*'. Apply element-wise and print the result array space-separated."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int a[1000], b[1000], c[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &a[i]);
+    for (int i = 0; i < n; i++) scanf("%d", &b[i]);
+
+    char op;
+    scanf(" %c", &op);
+
+    for (int i = 0; i < n; i++) {
+        switch (op) {
+            case '+': c[i] = a[i] + b[i]; break;
+            case '-': c[i] = a[i] - b[i]; break;
+            case '*': c[i] = a[i] * b[i]; break;
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", c[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n1 2 3 4\n10 20 30 40\n+", expected_stdout: "11 22 33 44\n" },
+    { stdin: "3\n5 10 15\n1 2 3\n-", expected_stdout: "4 8 12\n" },
+    { stdin: "3\n2 3 4\n5 6 7\n*", expected_stdout: "10 18 28\n" },
+    { stdin: "1\n42\n8\n+", expected_stdout: "50\n" }
+  ]}
+  hints={[
+    "Simple element-wise loops are perfect for auto-vectorization.",
+    "The compiler can vectorize c[i] = a[i] op b[i] easily.",
+    "With -O2 -march=native, this would use SIMD automatically."
+  ]}
+/>
+
+## What's Next
+
+Final lesson: **C Standards and Undefined Behavior** — the evolution of C and the dark corners you must avoid.

@@ -1,0 +1,313 @@
+---
+title: "Sliding Window"
+module: "Algorithm Techniques"
+order: 3
+description: "Solve subarray and substring problems efficiently with the sliding window technique."
+difficulty: "intermediate"
+---
+
+The **sliding window** is a close cousin of two pointers. Both use two indices moving
+through an array. The difference: a sliding window maintains a *contiguous range* and
+cares about what's *inside* the window, not just the endpoints.
+
+Think of it literally — a window sliding across a row of buildings. At each position,
+you see k buildings. Instead of counting the floors in all k buildings from scratch
+each time you slide, you subtract the building that left the window and add the one
+that entered. That's the core insight: **incremental updates instead of recomputation**.
+
+## Fixed-Size Window
+
+The simplest version: the window has a fixed width `k`, and it slides one position at
+a time.
+
+**Problem:** Find the maximum sum of any contiguous subarray of exactly `k` elements.
+
+The brute force computes the sum of each subarray independently — O(n×k). But each
+window shares all but two elements with its neighbor. We can do O(n):
+
+<Editor defaultCode={`#include <stdio.h>
+
+int max_sum_subarray(int arr[], int n, int k) {
+    // Compute the first window
+    int window_sum = 0;
+    for (int i = 0; i < k; i++) {
+        window_sum += arr[i];
+    }
+
+    int max_sum = window_sum;
+
+    // Slide: subtract the element leaving, add the element entering
+    for (int i = k; i < n; i++) {
+        window_sum += arr[i];       // new element enters from the right
+        window_sum -= arr[i - k];   // old element exits from the left
+
+        if (window_sum > max_sum) {
+            max_sum = window_sum;
+        }
+    }
+
+    return max_sum;
+}
+
+int main() {
+    int arr[] = {2, 1, 5, 1, 3, 2};
+    int n = 6, k = 3;
+
+    printf("Array: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\nk = %d\\n\\n", k);
+
+    // Show each window
+    for (int i = 0; i <= n - k; i++) {
+        int sum = 0;
+        printf("Window [");
+        for (int j = i; j < i + k; j++) {
+            if (j > i) printf(",");
+            printf("%d", arr[j]);
+            sum += arr[j];
+        }
+        printf("] sum = %d\\n", sum);
+    }
+
+    printf("\\nMax sum: %d\\n", max_sum_subarray(arr, n, k));
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Each element enters the window exactly once and exits exactly once. Two operations per
+element, regardless of `k`. That's why it's O(n), not O(n×k).
+
+## Variable-Size Window
+
+Now things get more interesting. What if the window doesn't have a fixed size? Instead,
+it expands and contracts based on some condition.
+
+**Problem:** Find the length of the **smallest** contiguous subarray whose sum is ≥ target.
+
+The strategy: expand the right end until the sum meets the target. Then shrink the
+left end as much as possible while the sum still qualifies. Record the minimum length.
+Then expand right again.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int min_subarray_len(int arr[], int n, int target) {
+    int left = 0;
+    int window_sum = 0;
+    int min_len = n + 1;  // Start with "impossible" length
+
+    for (int right = 0; right < n; right++) {
+        window_sum += arr[right];  // Expand: add right element
+
+        // Shrink from the left while we still meet the target
+        while (window_sum >= target) {
+            int len = right - left + 1;
+            if (len < min_len) min_len = len;
+
+            window_sum -= arr[left];  // Contract: remove left element
+            left++;
+        }
+    }
+
+    return (min_len <= n) ? min_len : 0;
+}
+
+int main() {
+    int arr[] = {2, 3, 1, 2, 4, 3};
+    int n = 6;
+    int target = 7;
+
+    printf("Array:  ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\nTarget: >= %d\\n\\n", target);
+
+    int result = min_subarray_len(arr, n, target);
+    printf("Smallest subarray with sum >= %d has length %d\\n", target, result);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+### Why Is This Still O(n)?
+
+It looks like there's a while loop inside a for loop — shouldn't that be O(n²)?
+
+No. Think about what `left` does across the *entire* execution. It starts at 0 and
+can only increase. It never goes back. Over the entire run of the algorithm, `left`
+moves at most `n` times total. So the while loop's iterations, summed across all
+iterations of the for loop, is at most `n`. Total work: O(n) + O(n) = O(n).
+
+<Callout type="info">
+This is a key analysis pattern to recognize: when an inner loop's variable only moves
+forward (never resets), the total work across all outer iterations is linear.
+The `left` pointer visits each element at most once over the entire algorithm.
+</Callout>
+
+## Sliding Window on Strings
+
+String problems often need to track character frequencies inside the window. Use an
+array (since ASCII has at most 128 characters) to maintain counts:
+
+**Problem:** Find the length of the longest substring without repeating characters.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int longest_unique_substring(char *s) {
+    int freq[128] = {0};  // Character counts in current window
+    int left = 0;
+    int max_len = 0;
+    int n = strlen(s);
+
+    for (int right = 0; right < n; right++) {
+        freq[(int)s[right]]++;
+
+        // If we have a duplicate, shrink from left until it's gone
+        while (freq[(int)s[right]] > 1) {
+            freq[(int)s[left]]--;
+            left++;
+        }
+
+        int len = right - left + 1;
+        if (len > max_len) max_len = len;
+    }
+
+    return max_len;
+}
+
+int main() {
+    char *tests[] = {"abcabcbb", "bbbbb", "pwwkew", "abcdef"};
+    int n = 4;
+
+    for (int i = 0; i < n; i++) {
+        printf("\\"%s\\" -> longest unique substring length: %d\\n",
+               tests[i], longest_unique_substring(tests[i]));
+    }
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The frequency array is always bounded by 128 entries (constants don't count toward
+Big O), so the space is O(1). The window grows right and shrinks left, with each
+character entering and leaving at most once.
+
+## The Sliding Window Template
+
+Most sliding window problems follow this pattern:
+
+```
+left = 0
+for right in 0..n-1:
+    update window state with arr[right]     // expand
+
+    while window violates some condition:
+        update window state removing arr[left]  // contract
+        left++
+
+    record answer (window size, contents, etc.)
+```
+
+The difference between problems is **what you track** (sum, count, frequency map) and
+**when you expand vs. contract** (sum exceeds target, window has duplicates, etc.).
+
+## Exercise: Max Consecutive Ones
+
+<Exercise
+  title="Maximum consecutive ones"
+  description="Given a binary array (only 0s and 1s), find the maximum number of consecutive 1s. Read n, then n integers (0 or 1)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    int max_ones = 0;
+    int current = 0;
+
+    // Scan through, counting consecutive 1s
+    // Reset when you hit a 0
+
+    printf("%d\\n", max_ones);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n1 1 0 1 1 1", expected_stdout: "3\n" },
+    { stdin: "4\n1 0 1 1", expected_stdout: "2\n" },
+    { stdin: "5\n0 0 0 0 0", expected_stdout: "0\n" },
+    { stdin: "3\n1 1 1", expected_stdout: "3\n" }
+  ]}
+  hints={[
+    "Keep a 'current' counter. When you see a 1, increment it. When you see a 0, reset it to 0.",
+    "After each step, update max_ones if current > max_ones."
+  ]}
+/>
+
+## Exercise: Subarray Sum Equals K
+
+<Exercise
+  title="Count subarrays with sum"
+  description="Given an array of positive integers and a target sum k, find how many contiguous subarrays have a sum exactly equal to k. Read n and k, then n positive integers."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n, k;
+    scanf("%d %d", &n, &k);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    int count = 0;
+    // Use a sliding window: expand right, shrink left when sum > k
+    // Count when sum == k, then shrink to continue searching
+
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 5\n1 2 3 1 1", expected_stdout: "3\n" },
+    { stdin: "4 3\n1 1 1 1", expected_stdout: "2\n" },
+    { stdin: "3 10\n1 2 3", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Start with left=0, window_sum=0. Expand right one step at a time, adding arr[right].",
+    "While window_sum > k, subtract arr[left] and move left++.",
+    "When window_sum == k, increment count, then subtract arr[left] and move left++ to continue."
+  ]}
+/>
+
+## Exercise: Best Time to Buy and Sell Stock
+
+<Exercise
+  title="Maximum profit"
+  description="Given daily stock prices, find the maximum profit from buying on one day and selling on a later day. If no profit is possible, print 0. Read n, then n prices."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int prices[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &prices[i]);
+
+    int max_profit = 0;
+    // Track the minimum price seen so far
+    // At each price, check if selling here gives a better profit
+
+    printf("%d\\n", max_profit);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n7 1 5 3 6 4", expected_stdout: "5\n" },
+    { stdin: "5\n7 6 4 3 1", expected_stdout: "0\n" },
+    { stdin: "4\n1 2 3 4", expected_stdout: "3\n" }
+  ]}
+  hints={[
+    "Keep track of the minimum price seen so far (start with prices[0]).",
+    "For each day i, the potential profit is prices[i] - min_price. Update max_profit if better.",
+    "Also update min_price if prices[i] is lower. This is O(n) time, O(1) space."
+  ]}
+/>

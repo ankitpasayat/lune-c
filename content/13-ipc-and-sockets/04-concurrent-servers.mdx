@@ -1,0 +1,369 @@
+---
+title: "Concurrent Servers"
+module: "IPC & Sockets"
+order: 4
+description: "Building servers that handle multiple clients with fork, threads, and event loops."
+difficulty: "advanced"
+---
+
+Everything we've built so far has a fatal flaw. Our TCP server accepts one client, handles the request, and only *then* goes back to accept the next client. If handling a request takes 10 seconds, every other client waits 10 seconds. If a client connects and never sends data, the server hangs forever — blocked on `read()`, unable to accept anyone else.
+
+This isn't a bug in our code. It's a fundamental architectural problem: blocking I/O + single thread = one client at a time. Solving this problem is one of the central challenges of systems programming, and the solution you choose shapes everything about your server's performance characteristics.
+
+## The Restaurant Analogy
+
+Imagine a restaurant with one waiter. The waiter greets a guest, takes their order, walks to the kitchen, waits for the food to cook, brings it back, waits for the guest to eat, clears the table, then moves to the next guest. If 50 people walk in, the last person waits through 49 full meals before they're even acknowledged.
+
+This is our sequential server. The `accept()` call is greeting a guest, `read()` is taking the order, and `write()` is serving the food. While one guest is being served, everyone else stares at the door.
+
+The restaurant industry solved this problem centuries ago, and their solutions map directly to server concurrency models:
+
+## The Problem with Sequential Servers
+
+```c
+while (1) {
+    int client = accept(server_fd, ...);
+    handle_client(client);  // Blocks everyone else!
+    close(client);
+}
+```
+
+While `handle_client()` is running — even if it's just waiting on a slow `read()` — the server is completely unavailable. No new connections are accepted, no other clients are served. A single slow or malicious client can denial-of-service your entire server.
+
+## Strategy 1: Fork per Connection
+
+**The analogy**: Hire a new waiter for every guest. Each waiter handles exactly one table, independently.
+
+When a new client connects, the server `fork()`s a child process to handle that client. The parent immediately goes back to `accept()` the next connection. Each client gets a dedicated process with its own memory space.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <signal.h>
+
+// Pseudocode for a forking server:
+//
+// signal(SIGCHLD, SIG_IGN);  // Auto-reap children
+//
+// while (1) {
+//     int client = accept(server_fd, ...);
+//     
+//     pid_t pid = fork();
+//     if (pid == 0) {
+//         close(server_fd);     // Child doesn't need listener
+//         handle_client(client); // Each client in own process
+//         close(client);
+//         _exit(0);
+//     }
+//     close(client);  // Parent doesn't need this client fd
+// }
+
+int main() {
+    printf("=== Forking Server Model ===\\n\\n");
+
+    printf("Pros:\\n");
+    printf("  + Simple to implement\\n");
+    printf("  + Process isolation (crash doesn't affect others)\\n");
+    printf("  + Can use all CPU cores\\n\\n");
+
+    printf("Cons:\\n");
+    printf("  - High overhead per connection (fork is expensive)\\n");
+    printf("  - Hard to share state between processes\\n");
+    printf("  - Doesn't scale to 10,000+ connections\\n\\n");
+
+    printf("Used by: Apache (prefork mode), early web servers\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Why is `fork()` expensive? Each `fork()` creates a complete copy of the process — page tables, file descriptors, signal handlers, and eventually (via copy-on-write page faults) memory pages. On a modern Linux system, forking takes roughly 1-2 milliseconds. That sounds fast, but at 1000 connections per second, you're spending 1-2 entire seconds just forking. And each child process has its own full address space — typically several megabytes — so 1000 concurrent clients means gigabytes of memory.
+
+The real strength of forking is **isolation**. If one client triggers a bug that crashes the handler, only that child process dies. The parent and all other children are unaffected. This is why Apache's prefork model was popular for years — robustness over raw performance.
+
+Notice two subtle details in the pseudocode: the child closes `server_fd` (it won't accept connections, so it shouldn't hold the listening socket), and the parent closes `client` (it's done with this connection — the child owns it now). Failing to close these file descriptors is a common leak.
+
+## Strategy 2: Thread per Connection
+
+**The analogy**: Instead of hiring new waiters (expensive, they each need a uniform, break room space), you have one waiter who can magically split into copies of themselves. Each copy shares the restaurant's kitchen and supplies.
+
+Threads are lighter than processes. They share the same address space, file descriptors, and heap memory. Creating a thread is typically 10-100x faster than forking, and each thread's overhead is just its stack (usually 1-8 MB by default, configurable).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+// Pseudocode for a threaded server:
+//
+// void *handle_client(void *arg) {
+//     int client_fd = *(int *)arg;
+//     free(arg);
+//     
+//     char buffer[4096];
+//     ssize_t n = read(client_fd, buffer, sizeof(buffer));
+//     // ... process request ...
+//     write(client_fd, response, strlen(response));
+//     close(client_fd);
+//     return NULL;
+// }
+//
+// while (1) {
+//     int client = accept(server_fd, ...);
+//     int *arg = malloc(sizeof(int));
+//     *arg = client;
+//     
+//     pthread_t thread;
+//     pthread_create(&thread, NULL, handle_client, arg);
+//     pthread_detach(thread);  // Don't need to join
+// }
+
+int main() {
+    printf("=== Threaded Server Model ===\\n\\n");
+
+    printf("Pros:\\n");
+    printf("  + Lower overhead than fork\\n");
+    printf("  + Easy to share state (same address space)\\n");
+    printf("  + Simpler than event loops\\n\\n");
+
+    printf("Cons:\\n");
+    printf("  - Thread creation still has overhead\\n");
+    printf("  - Need synchronization (mutexes)\\n");
+    printf("  - Stack memory per thread (~1-8MB)\\n");
+    printf("  - 10,000 threads = 10+ GB stack memory\\n\\n");
+
+    printf("Improvement: Thread pool\\n");
+    printf("  Pre-create N threads, reuse them for clients\\n");
+    printf("  Avoids repeated thread creation overhead\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The shared address space is both a blessing and a curse. It's a blessing because threads can easily share state — a shared data structure, a cache, a connection pool. It's a curse because now you need mutexes and careful synchronization, and a bug in one thread (like a buffer overflow) can corrupt memory for all threads, potentially crashing the entire server.
+
+Why the thread pool improvement matters: instead of creating and destroying a thread for every connection, you pre-create a fixed pool of threads (say, 64) and have them pick up client connections from a queue. This amortizes the creation cost and puts a ceiling on resource usage. Most production threaded servers use this model.
+
+Notice the `malloc()` / `free()` pattern for passing the file descriptor. You can't pass a pointer to a local variable because the main thread's loop iteration will overwrite it before the new thread reads it. Each thread needs its own copy of the file descriptor value.
+
+## Strategy 3: Event Loop (select/epoll)
+
+**The analogy**: One incredibly efficient waiter who never walks to the kitchen. Instead, they stand in the center of the restaurant and react to events: "Table 3's food is ready," "Table 7 wants to order," "New guest at the door." They handle each event instantly and move to the next. Because they never wait, one waiter can handle the entire restaurant.
+
+This is the event-driven model. A single thread monitors all sockets at once using `select()`, `poll()`, or `epoll()`. When any socket has data to read or is ready to write, the event loop handles it — but it must handle it *quickly* and without blocking, then go back to monitoring.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Pseudocode for an event-driven server:
+//
+// int epoll_fd = epoll_create1(0);
+// epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event);
+//
+// while (1) {
+//     int n = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+//     for (int i = 0; i < n; i++) {
+//         if (events[i].data.fd == server_fd) {
+//             // New connection
+//             int client = accept(server_fd, ...);
+//             epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client, &event);
+//         } else {
+//             // Data from existing client
+//             handle_client(events[i].data.fd);
+//         }
+//     }
+// }
+
+int main() {
+    printf("=== Event Loop Model ===\\n\\n");
+
+    printf("One thread handles ALL connections!\\n\\n");
+
+    printf("How it works:\\n");
+    printf("  1. Register all sockets with epoll\\n");
+    printf("  2. epoll_wait() blocks until ANY socket is ready\\n");
+    printf("  3. Process all ready sockets\\n");
+    printf("  4. Repeat\\n\\n");
+
+    printf("Pros:\\n");
+    printf("  + Handles 100,000+ connections in one thread\\n");
+    printf("  + Very low memory overhead\\n");
+    printf("  + No synchronization needed (single-threaded)\\n\\n");
+
+    printf("Cons:\\n");
+    printf("  - Complex programming model (state machines)\\n");
+    printf("  - Must not block in handlers\\n");
+    printf("  - Uses only one CPU core (combine with thread pool)\\n\\n");
+
+    printf("Used by: nginx, Node.js, Redis, HAProxy\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Why can a single thread handle 100,000+ connections? Because most connections are idle most of the time. A typical web client sends a request, waits for the response, reads it, then goes silent for a while. At any given moment, maybe 100 out of 100,000 connections actually have data to process. The event loop sleeps until something happens, handles just the active connections, and goes back to sleep. No wasted threads sitting idle, no wasted memory on stack space that isn't being used.
+
+The tradeoff is complexity. With threads, your handler code looks like normal sequential code: read request, process, write response. With an event loop, you can't block — so if processing takes time, you need to break it into stages and maintain state between them. Each connection becomes a state machine: "I've read 400 of the 1024 bytes in this request, waiting for more." This is why event-driven code is harder to write, but it's also why it scales so well.
+
+The "must not block" rule is critical. If your event handler calls `sleep()`, or does a synchronous database query, or reads a large file from disk, the *entire* event loop stalls — and with it, all 100,000 connections. Event-driven servers pair with non-blocking I/O, async libraries, and thread pools for CPU-intensive work.
+
+## Comparison
+
+| Model | Memory per Client | Context Switch | Max Clients | Complexity |
+|-------|------------------|----------------|-------------|------------|
+| Fork | ~MB (full process) | Heavy | ~1,000 | Low |
+| Thread | ~MB (stack) | Medium | ~10,000 | Medium |
+| Thread Pool | ~MB (fixed N) | Medium | ~10,000 | Medium |
+| Event Loop | ~KB (state only) | None | ~100,000+ | High |
+
+In practice, modern high-performance servers combine strategies. Nginx uses an event loop per CPU core (multi-process + event-driven). Go's `net/http` uses goroutines (ultra-lightweight threads + event loop underneath). The abstractions change, but the fundamental tradeoffs remain the same: memory per connection, context-switch overhead, and programming complexity.
+
+## The C10K Problem
+
+In 1999, Dan Kegel asked a deceptively simple question: "Can a single server handle 10,000 concurrent connections?" At the time, most servers used fork-per-connection or thread-per-connection models, and the answer was effectively "no" — they'd run out of memory or spend all their time context-switching.
+
+The C10K problem drove the development of scalable I/O APIs: Linux's `epoll` (2002), BSD's `kqueue`, and Windows' IOCP. These kernel-level mechanisms made event-driven servers practical, enabling nginx to replace Apache as the dominant web server for high-traffic sites.
+
+Today, the frontier has moved to C10M — ten *million* concurrent connections. At that scale, even the kernel's TCP stack becomes a bottleneck, and techniques like `io_uring`, kernel bypass (DPDK), and userspace networking enter the picture.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    printf("=== The C10K Problem ===\\n\\n");
+
+    printf("Can a single server handle 10,000 concurrent connections?\\n\\n");
+
+    printf("1999: Most servers couldn't do this\\n");
+    printf("  - Fork per connection: too much memory/CPU\\n");
+    printf("  - Thread per connection: stack exhaustion\\n\\n");
+
+    printf("Solution: Event-driven I/O\\n");
+    printf("  - Linux epoll (2002)\\n");
+    printf("  - BSD kqueue\\n");
+    printf("  - Windows IOCP\\n\\n");
+
+    printf("Today: The C10M problem\\n");
+    printf("  Can we handle 10 MILLION connections?\\n");
+    printf("  Techniques: io_uring, kernel bypass, DPDK\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Exercise: Server Connection Tracker
+
+<Exercise
+  title="Connection manager"
+  description="Simulate a server managing connections. Read N events: 'connect ID' adds a client, 'disconnect ID' removes a client, 'count' prints the number of active connections, 'list' prints all connected client IDs in order."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int clients[100];
+    int count = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[20];
+        scanf("%s", op);
+
+        if (strcmp(op, "connect") == 0) {
+            int id;
+            scanf("%d", &id);
+            clients[count++] = id;
+            printf("connected: %d\\n", id);
+        } else if (strcmp(op, "disconnect") == 0) {
+            int id;
+            scanf("%d", &id);
+            for (int j = 0; j < count; j++) {
+                if (clients[j] == id) {
+                    for (int k = j; k < count - 1; k++) {
+                        clients[k] = clients[k + 1];
+                    }
+                    count--;
+                    printf("disconnected: %d\\n", id);
+                    break;
+                }
+            }
+        } else if (strcmp(op, "count") == 0) {
+            printf("%d\\n", count);
+        } else if (strcmp(op, "list") == 0) {
+            for (int j = 0; j < count; j++) {
+                printf("%d", clients[j]);
+                if (j < count - 1) printf(" ");
+            }
+            printf("\\n");
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\nconnect 1\nconnect 2\nconnect 3\ncount\ndisconnect 2\ncount\nlist", expected_stdout: "connected: 1\nconnected: 2\nconnected: 3\n3\ndisconnected: 2\n2\n1 3\n" },
+    { stdin: "4\nconnect 10\nconnect 20\nlist\ncount", expected_stdout: "connected: 10\nconnected: 20\n10 20\n2\n" }
+  ]}
+  hints={[
+    "Use an array to track connected client IDs.",
+    "On disconnect, find the ID and shift remaining elements left.",
+    "count prints the current number, list prints all IDs."
+  ]}
+/>
+
+## Exercise: Event Loop Simulator
+
+<Exercise
+  title="Event dispatcher"
+  description="Simulate an event loop. Read N events, each with a file descriptor and type: 'FD TYPE' where TYPE is 'readable', 'writable', or 'error'. Group and print events by type."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int read_fds[100], write_fds[100], err_fds[100];
+    int rc = 0, wc = 0, ec = 0;
+
+    for (int i = 0; i < n; i++) {
+        int fd;
+        char type[20];
+        scanf("%d %s", &fd, type);
+
+        if (strcmp(type, "readable") == 0) {
+            read_fds[rc++] = fd;
+        } else if (strcmp(type, "writable") == 0) {
+            write_fds[wc++] = fd;
+        } else if (strcmp(type, "error") == 0) {
+            err_fds[ec++] = fd;
+        }
+    }
+
+    printf("Readable:");
+    for (int i = 0; i < rc; i++) printf(" %d", read_fds[i]);
+    printf("\\n");
+
+    printf("Writable:");
+    for (int i = 0; i < wc; i++) printf(" %d", write_fds[i]);
+    printf("\\n");
+
+    printf("Errors:");
+    for (int i = 0; i < ec; i++) printf(" %d", err_fds[i]);
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n3 readable\n4 writable\n5 readable\n3 writable\n6 error", expected_stdout: "Readable: 3 5\nWritable: 4 3\nErrors: 6\n" },
+    { stdin: "3\n1 readable\n2 readable\n3 readable", expected_stdout: "Readable: 1 2 3\nWritable:\nErrors:\n" }
+  ]}
+  hints={[
+    "Collect file descriptors into three separate arrays by type.",
+    "Print each category on its own line.",
+    "This simulates what select() or epoll returns."
+  ]}
+/>
+
+## What's Next
+
+Phase 4 complete! Next: **Phase 5 — Applications**, starting with **advanced data structures** like graphs, heaps, and tries.

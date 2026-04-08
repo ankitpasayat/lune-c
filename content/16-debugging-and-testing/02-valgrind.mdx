@@ -1,0 +1,276 @@
+---
+title: "Valgrind"
+module: "Debugging & Testing"
+order: 2
+description: "Use Valgrind to detect memory leaks, invalid reads/writes, and uninitialized memory access."
+difficulty: "intermediate"
+---
+
+Memory errors in C are uniquely dangerous because they are **silent**. A buffer overflow doesn't raise an exception — it quietly overwrites whatever happens to be next in memory. A use-after-free doesn't crash immediately — it reads whatever stale data is still sitting in the freed block, and your program produces subtly wrong results for weeks before anyone notices. A memory leak doesn't slow your program down at first — it slowly accumulates over hours or days until the system runs out of memory and everything falls over.
+
+These bugs are silent until they're catastrophic. You need a tool that watches every single memory access and tells you the moment something goes wrong — even when the program doesn't crash.
+
+That tool is **Valgrind**.
+
+## How Valgrind Works
+
+Valgrind doesn't just run your program — it **translates your program's machine code** into instrumented code that tracks every memory operation. Every `malloc` is recorded. Every `free` is recorded. Every read and write is checked against the list of currently valid allocations.
+
+This is called **binary instrumentation**, and it's why Valgrind is powerful but slow (10-50x slowdown). It's literally wrapping a guard around every memory access your program makes. You're trading speed for total visibility.
+
+```
+gcc -g -O0 -o program program.c
+valgrind ./program
+valgrind --leak-check=full ./program
+valgrind --track-origins=yes ./program
+```
+
+The `--leak-check=full` flag tells Valgrind to give you a detailed report of every leaked block at exit. The `--track-origins=yes` flag tracks where uninitialized values came from (at additional cost).
+
+## Memory Leak Detection
+
+Think of memory leaks with this analogy: `malloc` is like checking into a hotel room. `free` is like checking out. A memory leak is when you leave the hotel without checking out — the room is still reserved in your name, but nobody's using it. Do this enough times and the hotel runs out of rooms.
+
+There's also a subtler leak pattern: you check into room 101, then check into room 205 without checking out of 101 first. You've **lost the key** to room 101 — even if you wanted to check out, you can't, because you overwrote the only pointer to it.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Example: memory leak patterns
+
+// LEAK: allocated but never freed
+void leak_example(void) {
+    int *p = malloc(100 * sizeof(int));
+    p[0] = 42;
+    printf("Using allocated memory: %d\\n", p[0]);
+    // BUG: forgot to free(p)
+    // Valgrind says: "100 bytes in 1 blocks are definitely lost"
+}
+
+// LEAK: pointer reassigned without freeing
+void overwrite_leak(void) {
+    char *s = malloc(50);
+    strcpy(s, "hello");
+    s = malloc(100);  // Lost the original 50 bytes!
+    strcpy(s, "world");
+    free(s);  // Only frees the second allocation
+    // Valgrind: "50 bytes in 1 blocks are definitely lost"
+}
+
+// NO LEAK: properly freed
+void correct_example(void) {
+    int *arr = malloc(10 * sizeof(int));
+    for (int i = 0; i < 10; i++) arr[i] = i;
+
+    int sum = 0;
+    for (int i = 0; i < 10; i++) sum += arr[i];
+    printf("Sum: %d\\n", sum);
+
+    free(arr);  // Properly freed
+}
+
+int main() {
+    printf("=== Valgrind Leak Types ===\\n\\n");
+
+    printf("1. Definitely lost: memory with no pointers\\n");
+    printf("   (worst — guaranteed leak)\\n\\n");
+
+    printf("2. Indirectly lost: reachable only through\\n");
+    printf("   a definitely-lost block\\n\\n");
+
+    printf("3. Possibly lost: pointer to interior of block\\n");
+    printf("   (might be a leak)\\n\\n");
+
+    printf("4. Still reachable: pointer exists at exit\\n");
+    printf("   (often acceptable, freed by OS)\\n\\n");
+
+    // These would trigger Valgrind warnings:
+    // leak_example();
+    // overwrite_leak();
+
+    // This is clean:
+    correct_example();
+
+    printf("\\nAlways aim for: 0 bytes in 0 blocks leaked\\n");
+
+    return 0;
+}
+`} />
+
+Valgrind classifies leaks by severity. **Definitely lost** means no pointer to that block exists anymore — it's impossible to free. **Indirectly lost** means the block was only reachable through a definitely-lost block (like a linked list node whose head was leaked). **Still reachable** means a pointer exists at exit — typically global state that's cleaned up by the OS anyway. Focus on eliminating "definitely lost" first.
+
+## Invalid Memory Access
+
+Memory errors are like ghosts in your program. A **use-after-free** is talking to a ghost — the memory is gone, but its data might still be there, giving you the illusion that things work. A **heap buffer overflow** is reaching past the boundary of a room into the next one — you might read someone else's data or overwrite it, and neither of you knows it happened.
+
+The terrifying part is these bugs often don't crash. They just produce wrong results, corrupt data structures, or create security vulnerabilities. Valgrind catches them **every time**, even when they "work fine."
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Valgrind catches these even when they don't crash
+
+int main() {
+    printf("=== Invalid Memory Access Patterns ===\\n\\n");
+
+    // 1. Heap buffer overflow
+    printf("1. Heap buffer overflow\\n");
+    int *a = malloc(5 * sizeof(int));
+    for (int i = 0; i < 5; i++) a[i] = i;
+    // a[5] = 99;  // Invalid write of size 4
+    // Valgrind: "Invalid write of size 4"
+    printf("   a[5] = 99 → writes past allocation\\n\\n");
+
+    // 2. Use after free
+    printf("2. Use after free\\n");
+    int *b = malloc(sizeof(int));
+    *b = 42;
+    free(b);
+    // int x = *b;  // Invalid read of size 4
+    // Valgrind: "Invalid read of size 4, Address was freed"
+    printf("   *b after free(b) → reads freed memory\\n\\n");
+
+    // 3. Uninitialized value
+    printf("3. Uninitialized value\\n");
+    int c;
+    // if (c > 0) ...  // Conditional on uninitialized value
+    // Valgrind: "Conditional jump depends on uninitialised value"
+    printf("   using 'c' without assigning → undefined\\n\\n");
+
+    // 4. Double free
+    printf("4. Double free\\n");
+    int *d = malloc(sizeof(int));
+    free(d);
+    // free(d);  // Invalid free
+    // Valgrind: "Invalid free()"
+    printf("   free(d) twice → heap corruption\\n\\n");
+
+    // 5. Mismatched free
+    printf("5. Mismatched alloc/free\\n");
+    // malloc + delete, new + free, etc.
+    printf("   Use free() for malloc(), delete for new\\n");
+
+    free(a);
+    return 0;
+}
+`} />
+
+## Reading Valgrind Output
+
+Valgrind's output looks intimidating at first, but it follows a consistent pattern. Here's how to read it:
+
+```
+==12345== Invalid read of size 4
+==12345==    at 0x4005F2: main (program.c:15)
+==12345==  Address 0x5204054 is 0 bytes after a block of size 20 alloc'd
+==12345==    at 0x4C2FA3F: malloc (vg_replace_malloc.c:309)
+==12345==    by 0x4005BC: main (program.c:10)
+```
+
+The first line tells you **what happened**: an invalid read of 4 bytes. The second line tells you **where it happened**: line 15 of program.c. The third line gives you the **context**: the address is 0 bytes *after* a 20-byte block — meaning you read exactly one element past the end of a `malloc(20)`. The final lines show **where that block was allocated**: line 10.
+
+The stack trace is your best friend. It tells you the story: "You allocated 20 bytes at line 10, then tried to read 4 bytes starting right after those 20 bytes, at line 15." That's a classic off-by-one in an array loop.
+
+<Callout type="info">
+The `==12345==` prefix is the process ID — it keeps Valgrind output visually separate from your program's output. Compile with `-g` to get line numbers instead of raw addresses. Without `-g`, you'll see hex addresses but no source locations.
+</Callout>
+
+## Exercise: Fix Memory Leaks
+
+<Exercise
+  title="Leak-free string operations"
+  description="Read N strings. For each string, create a dynamically allocated uppercase copy, print it, then clean up. At the end, print 'done'. Every malloc must have a matching free."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+char *to_upper(const char *s) {
+    char *result = malloc(strlen(s) + 1);
+    for (int i = 0; s[i]; i++) {
+        result[i] = toupper((unsigned char)s[i]);
+    }
+    result[strlen(s)] = '\\0';
+    return result;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char buf[256];
+        scanf("%255s", buf);
+        char *upper = to_upper(buf);
+        printf("%s\\n", upper);
+        // TODO: Don't forget to free!
+        free(upper);
+    }
+
+    printf("done\\n");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nhello world test", expected_stdout: "HELLO\nWORLD\nTEST\ndone\n" },
+    { stdin: "1\nabc", expected_stdout: "ABC\ndone\n" },
+    { stdin: "2\nHello MiXeD", expected_stdout: "HELLO\nMIXED\ndone\n" }
+  ]}
+  hints={[
+    "to_upper() allocates memory that the caller must free.",
+    "Call free(upper) after printing each string.",
+    "Valgrind would report 'definitely lost' for each unfree'd string."
+  ]}
+/>
+
+## Exercise: Safe Dynamic Array
+
+<Exercise
+  title="Growing array without leaks"
+  description="Read integers until 0 is entered. Store them in a dynamically growing array (start with capacity 2, double when full). Print the count and all values. Free the array at the end."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int capacity = 2;
+    int size = 0;
+    int *arr = malloc(capacity * sizeof(int));
+
+    int val;
+    while (scanf("%d", &val) == 1 && val != 0) {
+        if (size == capacity) {
+            capacity *= 2;
+            arr = realloc(arr, capacity * sizeof(int));
+        }
+        arr[size++] = val;
+    }
+
+    printf("%d\\n", size);
+    for (int i = 0; i < size; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    if (size > 0) printf("\\n");
+
+    free(arr);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1 2 3 4 5 0", expected_stdout: "5\n1 2 3 4 5\n" },
+    { stdin: "42 0", expected_stdout: "1\n42\n" },
+    { stdin: "10 20 30 0", expected_stdout: "3\n10 20 30\n" },
+    { stdin: "1 2 3 4 5 6 7 8 9 0", expected_stdout: "9\n1 2 3 4 5 6 7 8 9\n" }
+  ]}
+  hints={[
+    "Start with malloc(2 * sizeof(int)), double capacity with realloc when full.",
+    "realloc handles copying old data to the new buffer.",
+    "Free the array at the end — Valgrind should show 0 leaks."
+  ]}
+/>
+
+## What's Next
+
+Next: **Sanitizers** — compiler-based tools that catch bugs even faster than Valgrind.

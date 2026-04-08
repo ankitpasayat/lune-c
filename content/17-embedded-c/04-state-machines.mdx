@@ -1,0 +1,386 @@
+---
+title: "State Machines"
+module: "Embedded & Constrained C"
+order: 4
+description: "Design state machines in C using enums and switch statements for event-driven embedded systems."
+difficulty: "advanced"
+---
+
+Embedded systems spend most of their time **waiting** and **reacting**. A door lock controller waits for a keypress, then validates the code, then unlocks the motor, then waits again. A thermostat monitors the temperature, turns on the heater when it's cold, waits until the target is reached, then turns it off. A communication protocol receives bytes one at a time, assembling them into packets, checking CRCs, and managing retransmissions.
+
+All of these are naturally described as **state machines**: the system is in one state (waiting, heating, receiving), an event occurs (keypress, temperature threshold, byte received), and the system transitions to a new state and performs an action.
+
+Why is this pattern so dominant in embedded? Three reasons:
+
+1. **Deterministic**: Given the current state and an event, the next state is always the same. No ambiguity, no surprises. This is critical for safety-critical systems.
+2. **Event-driven**: State machines respond to events as they arrive, which maps perfectly to interrupt-driven hardware. You don't poll in a tight loop — you process events.
+3. **Verifiable**: You can draw the state diagram on paper and trace through every possible sequence of events. This makes it possible to prove your system handles every case, including error recovery.
+
+## The Pattern: enum + switch
+
+The simplest C implementation uses an enum for states, an enum for events, and a switch statement for transitions. It's direct, readable, and works well for small state machines (say, up to 5-10 states).
+
+Think of the enum as a "you are here" marker on a map, and the switch as the set of roads leaving from that point. Each case checks "given I'm here, and this event happened, where do I go?"
+
+<Editor defaultCode={`#include <stdio.h>
+
+// A traffic light state machine
+typedef enum {
+    STATE_RED,
+    STATE_GREEN,
+    STATE_YELLOW
+} TrafficState;
+
+typedef enum {
+    EVENT_TIMER,
+    EVENT_EMERGENCY
+} TrafficEvent;
+
+const char *state_name(TrafficState s) {
+    switch (s) {
+        case STATE_RED:    return "RED";
+        case STATE_GREEN:  return "GREEN";
+        case STATE_YELLOW: return "YELLOW";
+    }
+    return "UNKNOWN";
+}
+
+TrafficState traffic_next(TrafficState current, TrafficEvent event) {
+    if (event == EVENT_EMERGENCY) return STATE_RED;
+
+    switch (current) {
+        case STATE_RED:    return STATE_GREEN;
+        case STATE_GREEN:  return STATE_YELLOW;
+        case STATE_YELLOW: return STATE_RED;
+    }
+    return STATE_RED;
+}
+
+int main() {
+    TrafficState state = STATE_RED;
+
+    TrafficEvent events[] = {
+        EVENT_TIMER, EVENT_TIMER, EVENT_TIMER,
+        EVENT_TIMER, EVENT_EMERGENCY, EVENT_TIMER
+    };
+    int n_events = 6;
+
+    printf("Traffic Light State Machine\\n");
+    printf("===========================\\n\\n");
+    printf("Initial: %s\\n\\n", state_name(state));
+
+    for (int i = 0; i < n_events; i++) {
+        const char *evt = events[i] == EVENT_TIMER ? "TIMER" : "EMERGENCY";
+        TrafficState next = traffic_next(state, events[i]);
+        printf("Event: %-10s  %s -> %s\\n",
+               evt, state_name(state), state_name(next));
+        state = next;
+    }
+
+    return 0;
+}
+`} />
+
+## Table-Driven State Machine
+
+The switch-case approach has a problem: as your state machine grows, the transition logic becomes a tangle of nested switches. Adding a new state means modifying code in multiple places, and it's easy to miss a transition.
+
+A **transition table** solves this by encoding the entire state machine as data — a 2D array indexed by `[current_state][event]`. Adding a new state means adding a row. Adding a new event means adding a column. The table IS the state diagram, just formatted as code.
+
+This approach also makes it easy to add **action functions** that execute during transitions. Instead of embedding actions inside switch cases, you can store function pointers alongside each transition.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// States
+typedef enum { S_IDLE, S_RUNNING, S_PAUSED, S_ERROR, S_COUNT } State;
+// Events
+typedef enum { E_START, E_PAUSE, E_RESUME, E_STOP, E_FAULT, E_COUNT } Event;
+
+const char *state_names[] = {"IDLE", "RUNNING", "PAUSED", "ERROR"};
+const char *event_names[] = {"START", "PAUSE", "RESUME", "STOP", "FAULT"};
+
+// Transition table: [current_state][event] = next_state
+// -1 means "invalid transition" (stay in current state)
+int transitions[S_COUNT][E_COUNT] = {
+    /*              START      PAUSE     RESUME    STOP      FAULT */
+    /* IDLE    */ { S_RUNNING, -1,       -1,       -1,       S_ERROR },
+    /* RUNNING */ { -1,        S_PAUSED, -1,       S_IDLE,   S_ERROR },
+    /* PAUSED  */ { -1,        -1,       S_RUNNING,S_IDLE,   S_ERROR },
+    /* ERROR   */ { -1,        -1,       -1,       S_IDLE,   -1      },
+};
+
+// Optional: action functions for each transition
+typedef void (*Action)(void);
+
+void action_start(void)  { printf("  [Motor starting]\\n"); }
+void action_stop(void)   { printf("  [Motor stopping]\\n"); }
+void action_pause(void)  { printf("  [Motor paused]\\n"); }
+void action_resume(void) { printf("  [Motor resuming]\\n"); }
+void action_fault(void)  { printf("  [FAULT DETECTED!]\\n"); }
+
+State process_event(State current, Event event) {
+    int next = transitions[current][event];
+    if (next == -1) {
+        printf("  [Invalid: %s in state %s]\\n",
+               event_names[event], state_names[current]);
+        return current;
+    }
+    return (State)next;
+}
+
+int main() {
+    State state = S_IDLE;
+
+    Event events[] = {
+        E_START, E_PAUSE, E_RESUME, E_STOP,
+        E_PAUSE,  // Invalid: can't pause when idle
+        E_START, E_FAULT, E_STOP
+    };
+    int n = 8;
+
+    printf("Motor Controller State Machine\\n");
+    printf("==============================\\n\\n");
+
+    for (int i = 0; i < n; i++) {
+        printf("%-8s + %-8s -> ",
+               state_names[state], event_names[events[i]]);
+        state = process_event(state, events[i]);
+        printf("%s\\n", state_names[state]);
+    }
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+Table-driven state machines scale better than nested switch statements. Adding a new state or event only requires adding a row or column to the table — no refactoring of control flow logic. They're also easier to verify: you can review the table cell by cell and confirm every state/event combination is handled correctly. For complex systems with 10+ states, a table-driven approach is almost always the right choice.
+</Callout>
+
+## Why Function Pointer Tables Scale Better
+
+For truly large state machines — a communication protocol with 20 states and complex transition logic — even the 2D table starts to strain. The next level is **function pointer tables**: each state has a handler function that receives the event and returns the next state.
+
+This scales better for three reasons: (1) each state's logic is encapsulated in its own function, so you can work on one state without seeing the others; (2) you can add state-specific data handling; (3) states become independently testable. Many real-time operating systems and protocol stacks use this pattern.
+
+## Real-World State Machines
+
+State machines aren't just an academic exercise — they're the backbone of real systems:
+
+- **Communication protocols** (TCP, USB, Bluetooth): Each packet exchange follows a precisely defined sequence of states. The TCP connection lifecycle (LISTEN, SYN_SENT, ESTABLISHED, FIN_WAIT, etc.) is literally a state machine.
+- **Motor controllers**: Idle, accelerating, running, decelerating, fault. Each transition requires specific hardware commands and safety checks.
+- **User interfaces**: Menu navigation on an embedded display is a tree of states where button presses cause transitions.
+- **Vending machines**: Wait for coins, accept selection, dispense item, return change. Each stage has different allowed inputs and outputs.
+
+Drawing the **state transition diagram** before writing code is one of the most productive things you can do in embedded development. The diagram serves as both the design document and the test specification — you can trace every path and ask "what happens if the user does X in state Y?"
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// A vending machine with sub-states
+
+typedef enum {
+    VM_IDLE,
+    VM_ACCEPTING_COINS,
+    VM_DISPENSING,
+    VM_RETURNING_CHANGE
+} VendingState;
+
+typedef struct {
+    VendingState state;
+    int balance;        // Cents inserted
+    int item_price;     // Price of selected item
+} VendingMachine;
+
+void vm_init(VendingMachine *vm) {
+    vm->state = VM_IDLE;
+    vm->balance = 0;
+    vm->item_price = 150;  // $1.50
+}
+
+void vm_insert_coin(VendingMachine *vm, int cents) {
+    if (vm->state == VM_IDLE) {
+        vm->state = VM_ACCEPTING_COINS;
+    }
+
+    if (vm->state == VM_ACCEPTING_COINS) {
+        vm->balance += cents;
+        printf("  Inserted %d cents. Balance: %d cents\\n",
+               cents, vm->balance);
+    }
+}
+
+void vm_select_item(VendingMachine *vm) {
+    if (vm->state != VM_ACCEPTING_COINS) {
+        printf("  Insert coins first!\\n");
+        return;
+    }
+
+    if (vm->balance >= vm->item_price) {
+        vm->state = VM_DISPENSING;
+        printf("  Dispensing item...\\n");
+        vm->balance -= vm->item_price;
+
+        if (vm->balance > 0) {
+            vm->state = VM_RETURNING_CHANGE;
+            printf("  Returning %d cents change\\n", vm->balance);
+        }
+        vm->balance = 0;
+        vm->state = VM_IDLE;
+        printf("  Ready for next customer\\n");
+    } else {
+        printf("  Need %d more cents\\n",
+               vm->item_price - vm->balance);
+    }
+}
+
+void vm_cancel(VendingMachine *vm) {
+    if (vm->balance > 0) {
+        printf("  Returning %d cents\\n", vm->balance);
+        vm->balance = 0;
+    }
+    vm->state = VM_IDLE;
+    printf("  Cancelled. Ready.\\n");
+}
+
+int main() {
+    VendingMachine vm;
+    vm_init(&vm);
+
+    printf("Vending Machine (item costs $1.50)\\n");
+    printf("===================================\\n\\n");
+
+    // Customer 1: exact change
+    printf("Customer 1:\\n");
+    vm_insert_coin(&vm, 100);
+    vm_insert_coin(&vm, 50);
+    vm_select_item(&vm);
+
+    // Customer 2: with change
+    printf("\\nCustomer 2:\\n");
+    vm_insert_coin(&vm, 100);
+    vm_insert_coin(&vm, 100);
+    vm_select_item(&vm);
+
+    // Customer 3: not enough, cancel
+    printf("\\nCustomer 3:\\n");
+    vm_insert_coin(&vm, 25);
+    vm_select_item(&vm);
+    vm_cancel(&vm);
+
+    return 0;
+}
+`} />
+
+## Exercise: Command Parser State Machine
+
+<Exercise
+  title="Protocol parser"
+  description="Parse simple commands from a character stream. Each command is a letter (A-Z) followed by a number (0-9+), terminated by semicolon. Read a string and print each parsed command as 'CMD:N' on its own line. Ignore whitespace. Example: 'A123;B45;' prints 'A:123' and 'B:45'."
+  starterCode={`#include <stdio.h>
+#include <ctype.h>
+#include <string.h>
+
+typedef enum { WAIT_CMD, READ_NUM } State;
+
+int main() {
+    char input[256];
+    fgets(input, 256, stdin);
+    size_t len = strlen(input);
+    if (len > 0 && input[len-1] == '\\n') input[--len] = '\\0';
+
+    State state = WAIT_CMD;
+    char cmd = 0;
+    int num = 0;
+
+    for (int i = 0; i < (int)len; i++) {
+        char c = input[i];
+        if (isspace(c)) continue;
+
+        switch (state) {
+            case WAIT_CMD:
+                if (isupper(c)) {
+                    cmd = c;
+                    num = 0;
+                    state = READ_NUM;
+                }
+                break;
+            case READ_NUM:
+                if (isdigit(c)) {
+                    num = num * 10 + (c - '0');
+                } else if (c == ';') {
+                    printf("%c:%d\\n", cmd, num);
+                    state = WAIT_CMD;
+                }
+                break;
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "A123;B45;", expected_stdout: "A:123\nB:45\n" },
+    { stdin: "X1;Y2;Z3;", expected_stdout: "X:1\nY:2\nZ:3\n" },
+    { stdin: "M 100 ; N 200 ;", expected_stdout: "M:100\nN:200\n" },
+    { stdin: "P0;", expected_stdout: "P:0\n" }
+  ]}
+  hints={[
+    "Use two states: WAIT_CMD and READ_NUM.",
+    "In WAIT_CMD, look for an uppercase letter to start a command.",
+    "In READ_NUM, accumulate digits. On semicolon, print and reset.",
+    "Skip whitespace in both states."
+  ]}
+/>
+
+## Exercise: Simple State Machine
+
+<Exercise
+  title="Door lock controller"
+  description="Simulate a door lock. States: LOCKED, UNLOCKED. Events: 'L' (lock), 'U' (unlock), 'O' (open). Rules: Can only open when UNLOCKED. Print state after each event. If opening while locked, print 'denied'. Start state: LOCKED."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int locked = 1;  // 1 = LOCKED, 0 = UNLOCKED
+
+    for (int i = 0; i < n; i++) {
+        char event;
+        scanf(" %c", &event);
+
+        if (event == 'U') {
+            locked = 0;
+            printf("UNLOCKED\\n");
+        } else if (event == 'L') {
+            locked = 1;
+            printf("LOCKED\\n");
+        } else if (event == 'O') {
+            if (locked) {
+                printf("denied\\n");
+            } else {
+                printf("opened\\n");
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nO\nU\nO\nL", expected_stdout: "denied\nUNLOCKED\nopened\nLOCKED\n" },
+    { stdin: "3\nU\nL\nO", expected_stdout: "UNLOCKED\nLOCKED\ndenied\n" },
+    { stdin: "2\nU\nO", expected_stdout: "UNLOCKED\nopened\n" },
+    { stdin: "1\nO", expected_stdout: "denied\n" }
+  ]}
+  hints={[
+    "Track state as a simple boolean: locked or unlocked.",
+    "L always sets locked, U always clears it.",
+    "O checks the locked flag before allowing open."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next: the final module — **Performance & Advanced C** — cache optimization, function pointers, and C standards.

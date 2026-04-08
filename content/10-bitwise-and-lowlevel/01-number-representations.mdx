@@ -1,0 +1,342 @@
+---
+title: "Number Representations"
+module: "Bitwise & Low-Level"
+order: 1
+description: "Binary, hexadecimal, two's complement, and how numbers are stored in memory."
+difficulty: "intermediate"
+---
+
+Before you can flip individual bits, you need to understand what those bits actually *mean*. This lesson builds the mental model for how computers encode numbers — and, crucially, **why** they chose the encoding they did.
+
+## Binary (Base 2)
+
+You already know that computers store everything as 0s and 1s. But *why* binary? Because every bit maps directly to a physical thing that has two states — a transistor is either conducting or not, a voltage is either high or low, a magnetic region is either north or south. Binary isn't a design choice so much as a consequence of physics: it's the easiest signal to distinguish reliably in noisy hardware.
+
+Each position in a binary number represents a power of 2, just like each position in a decimal number represents a power of 10. The rightmost bit is the "ones" place (`2^0 = 1`), the next is the "twos" place (`2^1 = 2`), and so on:
+
+```
+  1    0    1    0       (binary)
+  ↓    ↓    ↓    ↓
+  2³   2²   2¹   2⁰
+  8  + 0  + 2  + 0  = 10  (decimal)
+```
+
+Here are some reference values worth memorizing:
+
+| Decimal | Binary | Hex |
+|---------|--------|-----|
+| 0 | `0000` | `0x0` |
+| 1 | `0001` | `0x1` |
+| 5 | `0101` | `0x5` |
+| 10 | `1010` | `0xA` |
+| 15 | `1111` | `0xF` |
+| 255 | `1111 1111` | `0xFF` |
+
+Notice a pattern with 15 and 255 — when all bits are 1, the value is `2^n - 1` where n is the number of bits. Four 1-bits give you 15 (`2^4 - 1`), eight give you 255 (`2^8 - 1`). This isn't a coincidence — it's like how 999 is `10^3 - 1` in decimal.
+
+## Printing Binary in C
+
+C doesn't have a built-in format specifier for binary (there's `%d` for decimal, `%x` for hex, but no `%b` in standard C). So we build our own by extracting one bit at a time with shifts and masks — techniques you'll master in the next lesson:
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary(unsigned int n, int bits) {
+    for (int i = bits - 1; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i % 4 == 0 && i != 0) printf(" ");
+    }
+    printf("\\n");
+}
+
+int main() {
+    printf("Decimal -> Binary (8-bit)\\n");
+    printf("   0 = "); print_binary(0, 8);
+    printf("   1 = "); print_binary(1, 8);
+    printf("  42 = "); print_binary(42, 8);
+    printf(" 127 = "); print_binary(127, 8);
+    printf(" 255 = "); print_binary(255, 8);
+
+    printf("\\nHexadecimal examples:\\n");
+    printf("0x0A = %d\\n", 0x0A);
+    printf("0xFF = %d\\n", 0xFF);
+    printf("0x1A3 = %d\\n", 0x1A3);
+
+    return 0;
+}
+`} time="O(b)" space="O(1)" />
+
+## Hexadecimal (Base 16)
+
+Writing long strings of 0s and 1s is tedious and error-prone. Hexadecimal solves this by giving each group of 4 bits a single symbol. Since 4 bits can represent values 0–15, hex uses digits 0–9 plus letters A–F:
+
+| Hex | Binary | Decimal |
+|-----|--------|---------|
+| `0x0` - `0x9` | `0000` - `1001` | 0 - 9 |
+| `0xA` - `0xF` | `1010` - `1111` | 10 - 15 |
+
+The beauty of hex is that conversion to binary is *instant* — just expand each hex digit to 4 bits. `0xCA` becomes `1100 1010`. No arithmetic needed. This is why you see hex everywhere in systems programming: memory addresses, color codes, error codes, register values.
+
+```c
+int x = 0xFF;    // 255 in decimal, 1111 1111 in binary
+int y = 0x1A;    // 26 in decimal
+```
+
+## Integer Sizes in C
+
+A single bit can only represent 0 or 1. To represent larger numbers, we group bits together. The C language gives you several integer sizes:
+
+| Type | Typical Size | Range |
+|------|-------------|-------|
+| `char` | 1 byte (8 bits) | -128 to 127 (or 0-255 unsigned) |
+| `short` | 2 bytes (16 bits) | -32,768 to 32,767 |
+| `int` | 4 bytes (32 bits) | ~-2.1 billion to ~2.1 billion |
+| `long long` | 8 bytes (64 bits) | ~-9.2 × 10¹⁸ to ~9.2 × 10¹⁸ |
+
+Why these specific sizes? They correspond to what the CPU can process efficiently in a single operation. A 32-bit CPU has registers that are 32 bits wide, so a 32-bit `int` maps naturally to one register. Using a smaller type doesn't necessarily save time — the CPU often processes it as a full register anyway — but it saves *memory* when you have millions of values.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+int main() {
+    printf("Type sizes:\\n");
+    printf("  char:      %zu byte(s)\\n", sizeof(char));
+    printf("  short:     %zu byte(s)\\n", sizeof(short));
+    printf("  int:       %zu byte(s)\\n", sizeof(int));
+    printf("  long:      %zu byte(s)\\n", sizeof(long));
+    printf("  long long: %zu byte(s)\\n", sizeof(long long));
+
+    printf("\\nint range: %d to %d\\n", INT_MIN, INT_MAX);
+    printf("unsigned int max: %u\\n", UINT_MAX);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Two's Complement: The Clever Encoding for Negative Numbers
+
+Here's the big question: how do you represent negative numbers with just 0s and 1s? There's no minus sign in binary. Computer designers considered three approaches:
+
+**Sign-magnitude**: use the leftmost bit as a sign flag (0 = positive, 1 = negative), and the rest as the magnitude. So +5 is `0 0000101` and -5 is `1 0000101`. Simple, but it has two representations for zero (`00000000` and `10000000`), and addition requires special logic — you can't just add the bit patterns of 5 and -5 and get 0.
+
+**One's complement**: negate by flipping all bits. +5 is `00000101`, -5 is `11111010`. Still has two zeros (`00000000` and `11111111`), and addition needs an awkward "end-around carry" correction.
+
+**Two's complement**: negate by flipping all bits **and adding 1**. +5 is `00000101`, -5 is `11111011`. Only one zero. And here's the killer feature: **ordinary binary addition just works**. The CPU doesn't need to know or care whether the numbers are signed or unsigned — the same addition circuit handles both.
+
+### The Odometer Analogy
+
+Think of an 8-bit number like a car odometer that only shows 3 digits and rolls over at 256. If the odometer reads 000 and you drive backward one mile, it rolls to 255. Drive backward two miles from zero, you get 254.
+
+```
+Forward:   0, 1, 2, 3, ..., 126, 127
+Rollover:  128, 129, ..., 254, 255
+Meaning:  -128, -127, ...,  -2,  -1
+```
+
+Two's complement simply says: we agree that anything from 128 to 255 represents negative numbers (by "wrapping around" past zero). The highest bit (bit 7 in an 8-bit number) ends up serving as the sign bit — not because it was *designed* as a sign flag, but because all numbers in the "negative" half happen to have it set.
+
+### Why -5 + 5 = 0: A Step-by-Step Proof
+
+Let's convert -5 to two's complement (8-bit) and verify that adding it to 5 gives 0:
+
+```
+Step 1: Start with +5          =  00000101
+Step 2: Flip all bits           =  11111010
+Step 3: Add 1                   =  11111011  (this is -5)
+
+Now add 5 + (-5):
+    00000101   (5)
+  + 11111011   (-5)
+  ----------
+  1 00000000
+  ↑
+  This carry bit overflows out of 8 bits, leaving 00000000 = 0. ✓
+```
+
+The extra carry simply vanishes — it falls off the end of the register. The hardware doesn't need any special subtraction logic. This is why two's complement won: **one adder circuit handles addition, subtraction, signed, and unsigned numbers**. Hardware simplicity is everything.
+
+For an 8-bit signed integer, the range is:
+- `0111 1111` = 127 (largest positive)
+- `0000 0001` = 1
+- `0000 0000` = 0
+- `1111 1111` = -1 (one step backward from 0)
+- `1000 0000` = -128 (most negative)
+
+Notice -1 is all 1s — it's the "odometer reading" right before zero.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i == 4) printf(" ");
+    }
+}
+
+int main() {
+    // Show two's complement
+    for (int val = -3; val <= 3; val++) {
+        unsigned char bits = (unsigned char)val;
+        printf("%4d = ", val);
+        print_binary(bits);
+        printf("\\n");
+    }
+
+    printf("\\nNegation: flip and add 1\\n");
+    unsigned char pos = 5;     // 0000 0101
+    unsigned char neg = ~pos + 1;  // 1111 1011 = -5
+    printf(" 5 = "); print_binary(pos); printf("\\n");
+    printf("~5 = "); print_binary(~pos & 0xFF); printf("\\n");
+    printf("-5 = "); print_binary(neg); printf("\\n");
+    printf("Value: %d\\n", (signed char)neg);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Overflow: When the Odometer Rolls Over
+
+Since integers have a fixed number of bits, they have a maximum value. What happens when you exceed it? The number wraps around — just like our odometer analogy.
+
+For unsigned types, this wraparound is well-defined: `255 + 1 = 0` for an 8-bit unsigned. The C standard guarantees this modular arithmetic.
+
+For signed types, however, overflow is **undefined behavior**. The C standard says a conforming program must never overflow a signed integer. Why? Because the standard doesn't mandate two's complement (though virtually all modern hardware uses it), and different representations would overflow differently. More importantly, declaring it undefined lets the compiler optimize aggressively — it can assume `x + 1 > x` is always true for signed `x`, for example.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+int main() {
+    // Unsigned overflow: wraps to 0
+    unsigned char uc = 255;
+    printf("unsigned char 255 + 1 = %d\\n", (unsigned char)(uc + 1));
+
+    // Signed overflow is UNDEFINED BEHAVIOR in C
+    // But typically wraps on most systems
+    printf("\\nINT_MAX = %d\\n", INT_MAX);
+    printf("INT_MIN = %d\\n", INT_MIN);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Signed integer overflow is **undefined behavior** in C. The compiler can assume it never happens, which can lead to surprising optimizations. Always check before operations that might overflow.
+</Callout>
+
+## Exercise: Decimal to Binary
+
+<Exercise
+  title="Binary conversion"
+  description="Read an unsigned integer N (0-255). Print its 8-bit binary representation as a string of 0s and 1s (no spaces)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    unsigned int n;
+    scanf("%u", &n);
+
+    // Print 8-bit binary from most significant to least
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "00000000\n" },
+    { stdin: "42", expected_stdout: "00101010\n" },
+    { stdin: "255", expected_stdout: "11111111\n" },
+    { stdin: "128", expected_stdout: "10000000\n" }
+  ]}
+  hints={[
+    "Shift right by i positions, then mask with & 1 to get each bit.",
+    "Start from bit 7 (most significant) down to bit 0.",
+    "The expression (n >> i) & 1 extracts the i-th bit."
+  ]}
+/>
+
+## Exercise: Hex to Decimal
+
+<Exercise
+  title="Hex converter"
+  description="Read a hexadecimal string (without 0x prefix, uppercase A-F). Print its decimal value."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+int main() {
+    char hex[20];
+    scanf("%s", hex);
+
+    unsigned long value = 0;
+    for (int i = 0; hex[i] != '\\0'; i++) {
+        value *= 16;
+        if (hex[i] >= '0' && hex[i] <= '9') {
+            value += hex[i] - '0';
+        } else if (hex[i] >= 'A' && hex[i] <= 'F') {
+            value += hex[i] - 'A' + 10;
+        } else if (hex[i] >= 'a' && hex[i] <= 'f') {
+            value += hex[i] - 'a' + 10;
+        }
+    }
+
+    printf("%lu\\n", value);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "FF", expected_stdout: "255\n" },
+    { stdin: "0A", expected_stdout: "10\n" },
+    { stdin: "1A3", expected_stdout: "419\n" },
+    { stdin: "10", expected_stdout: "16\n" }
+  ]}
+  hints={[
+    "Process each character left to right, multiplying the running total by 16.",
+    "Digits 0-9 have value (char - '0'). Letters A-F have value (char - 'A' + 10).",
+    "Handle both uppercase and lowercase hex digits."
+  ]}
+/>
+
+## Exercise: Two's Complement
+
+<Exercise
+  title="Negate using two's complement"
+  description="Read an integer N (-128 to 127). Print the 8-bit binary of N, then the 8-bit binary of -N (both as two's complement, no spaces)."
+  starterCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+    }
+    printf("\\n");
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    unsigned char bits_n = (unsigned char)n;
+    unsigned char bits_neg = (unsigned char)(-n);
+
+    print_binary8(bits_n);
+    print_binary8(bits_neg);
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1", expected_stdout: "00000001\n11111111\n" },
+    { stdin: "5", expected_stdout: "00000101\n11111011\n" },
+    { stdin: "-1", expected_stdout: "11111111\n00000001\n" },
+    { stdin: "0", expected_stdout: "00000000\n00000000\n" }
+  ]}
+  hints={[
+    "Cast to unsigned char to get the bit pattern.",
+    "Two's complement negation: ~x + 1.",
+    "Casting -n to unsigned char gives the two's complement representation."
+  ]}
+/>
+
+## What's Next
+
+Now that you understand how numbers are stored, let's learn the **bitwise operators** that manipulate individual bits.

@@ -1,0 +1,110 @@
+---
+title: "Unions and Bitfields"
+module: "Structs and Enums"
+order: 4
+description: "Sharing memory with unions, tagged unions, and packing bits with bitfields."
+difficulty: "advanced"
+---
+
+Structs give each field its own memory. A `struct` with an `int`, a `float`, and a `char` uses at least 4 + 4 + 1 = 9 bytes (likely 12 with padding). Each field lives at its own address, and you can use all of them simultaneously.
+
+Unions flip this on its head: every field shares the **same** memory. The union is as large as its biggest field, and only one field is valid at any given time.
+
+Why would you ever want this? Because sometimes a value can be one of several types, but never more than one at the same time. Think of a cell in a spreadsheet: it's either a number, or a string, or a formula — but never all three. Storing space for all three simultaneously wastes memory. A union says "I'll hold *one* of these — you tell me which."
+
+## Unions
+
+Picture three transparent overlays stacked on the same piece of paper. An `int`, a `float`, and a `char` all occupy the same bytes in memory. Writing to one overwrites the others — because there are no "others," just different *interpretations* of the same bits:
+
+```
+Memory layout of union Data (4 bytes):
+  Byte 0   Byte 1   Byte 2   Byte 3
+ [  ----     ----     ----     ---- ]
+  ^--- d.i reads all 4 bytes as int
+  ^--- d.f reads all 4 bytes as float
+  ^--- d.c reads 1 byte as char
+```
+
+<Editor defaultCode={`#include <stdio.h>\n\nunion Data {\n    int i;\n    float f;\n    char c;\n};\n\nint main() {\n    union Data d;\n    \n    printf("Size of union: %zu bytes\\n", sizeof(d));\n    // Size equals the largest member (4 bytes for int/float)\n    \n    d.i = 42;\n    printf("As int:   %d\\n", d.i);\n    \n    d.f = 3.14;\n    printf("As float: %.2f\\n", d.f);\n    // d.i is now invalid — it shares memory with d.f\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+After `d.f = 3.14`, the bytes that stored `42` have been overwritten with the IEEE 754 representation of `3.14`. If you read `d.i` now, you'd get some garbage integer — it would be the int *interpretation* of the float's bit pattern. This isn't useful (usually), and technically it's undefined behavior with some exceptions.
+
+<Callout type="warning">
+Reading a union field that wasn't the last one written is technically undefined behavior (with some exceptions). Unions are for storing *one* value at a time, where the type can vary. Think of it as a "one room apartment" — only one tenant at a time. The previous tenant's furniture has been removed.
+</Callout>
+
+So if you can only use one field at a time, how do you know which field is currently valid? That's where tagged unions come in.
+
+## Tagged Unions
+
+A union by itself is dangerous because there's no way to know which field was last written. The solution: wrap the union in a struct, paired with an enum "tag" that tracks which field is active.
+
+This is called a **tagged union** (also known as a "discriminated union" or "variant type"). It's one of the most powerful patterns in C, and variations of it appear everywhere:
+
+- **Interpreters**: A `Value` type that can be an integer, float, string, boolean, or null
+- **JSON parsers**: A node that can be a number, string, array, object, or boolean
+- **Compilers**: An AST node that can be a binary expression, function call, or literal
+- **Network protocols**: A message that can be a request, response, or error
+
+The pattern is always the same: enum for "what kind," union for "the actual data," struct to tie them together.
+
+<Editor defaultCode={`#include <stdio.h>\n\ntypedef enum { TYPE_INT, TYPE_FLOAT, TYPE_STRING } ValueType;\n\ntypedef struct {\n    ValueType type;\n    union {\n        int i;\n        float f;\n        char s[32];\n    } data;\n} Value;\n\nvoid print_value(Value *v) {\n    switch (v->type) {\n        case TYPE_INT:\n            printf("Int: %d\\n", v->data.i);\n            break;\n        case TYPE_FLOAT:\n            printf("Float: %.2f\\n", v->data.f);\n            break;\n        case TYPE_STRING:\n            printf("String: %s\\n", v->data.s);\n            break;\n    }\n}\n\nint main() {\n    Value values[3];\n    \n    values[0] = (Value){TYPE_INT, .data.i = 42};\n    values[1] = (Value){TYPE_FLOAT, .data.f = 3.14};\n    values[2].type = TYPE_STRING;\n    snprintf(values[2].data.s, 32, "hello");\n    \n    for (int i = 0; i < 3; i++) {\n        print_value(&values[i]);\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Notice the discipline: every time we set `data.i`, we also set `type = TYPE_INT`. Every time we read from the union, we check the tag first. This discipline is entirely on you — the compiler won't enforce it. If you set `type = TYPE_INT` but read `data.f`, you'll get garbage. Languages like Rust, Haskell, and TypeScript have built-in sum types that make this pattern impossible to misuse. In C, it's a convention you uphold manually.
+
+What about memory savings? Consider an array of 1000 `Value` objects. Without the union, you'd need space for *all* fields in every element — the int, the float, AND the 32-byte string. That's 40+ bytes per element. With the union, each element only uses the size of the largest field (32 bytes for the string) plus the tag. That's a meaningful difference when you're storing thousands of values.
+
+## Bitfields
+
+Arrays and strings deal with bytes. But sometimes you need to think at the level of individual bits. A boolean flag needs only 1 bit, not 8. A color index 0-15 needs only 4 bits, not 32. When you're packing data into hardware registers, network packets, or file headers, every bit matters.
+
+Bitfields let you specify the exact number of bits for each struct member:
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Flags {\n    unsigned int bold      : 1;  // 1 bit\n    unsigned int italic    : 1;  // 1 bit\n    unsigned int underline : 1;  // 1 bit\n    unsigned int color     : 4;  // 4 bits (0-15)\n    unsigned int size      : 8;  // 8 bits (0-255)\n};\n\nint main() {\n    struct Flags f = {0};\n    f.bold = 1;\n    f.italic = 0;\n    f.underline = 1;\n    f.color = 7;\n    f.size = 12;\n    \n    printf("Bold: %d\\n", f.bold);\n    printf("Color: %d\\n", f.color);\n    printf("Size: %d\\n", f.size);\n    printf("Struct size: %zu bytes\\n", sizeof(f));\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Without bitfields, these five values would need five `unsigned int` variables — 20 bytes. With bitfields, the compiler packs them into a total of 15 bits, which fits in a single 4-byte integer.
+
+<Callout type="info">
+Bitfields pack multiple values into fewer bytes than separate variables would require. They're common in hardware registers, network packet headers, and file format parsers where every bit counts. The tradeoff: the compiler generates more complex code to extract and set individual bit ranges, so there's a small performance cost on each access.
+</Callout>
+
+**The portability problem.** Here's the catch: the C standard leaves many details of bitfield layout up to the compiler. It doesn't specify:
+
+- Whether bits are packed left-to-right or right-to-left within an integer
+- Whether a bitfield can straddle a byte boundary
+- How much padding is inserted between fields
+
+This means the *exact bit layout* of a bitfield struct can differ between compilers, architectures, and even compiler flags. If you're writing data to a file or sending it over a network, bitfield layout might not match on the receiving end.
+
+For this reason, many projects avoid bitfields for data interchange and use explicit bit masking instead (`flags & 0x01`, `(value >> 4) & 0x0F`). Bitfields are most useful within a single program on a single platform — like reading hardware registers on an embedded system where you control the toolchain.
+
+## When to Use What
+
+| Feature | Use case | Key insight |
+|---------|----------|-------------|
+| **struct** | Group related data (most common) | Each field gets its own memory |
+| **union** | Store one of multiple types at a time | All fields share the same memory |
+| **enum** | Named constants, state machines | Readability over magic numbers |
+| **bitfield** | Pack boolean flags or small values tightly | Bit-level control, but not portable |
+| **typedef** | Create readable type aliases for any of the above | Communicates intent |
+
+## Exercise: Simple Tagged Union
+
+<Exercise
+  title="Number or text"
+  description="Read a type (1=integer, 2=string). If 1, read an integer and print 'int: N'. If 2, read a word and print 'str: word'."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int type;\n    scanf("%d", &type);\n    \n    if (type == 1) {\n        int val;\n        scanf("%d", &val);\n        printf("int: %d\\n", val);\n    } else if (type == 2) {\n        char word[100];\n        scanf("%99s", word);\n        printf("str: %s\\n", word);\n    }\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "1\n42", expected_stdout: "int: 42\n" },
+    { stdin: "2\nhello", expected_stdout: "str: hello\n" },
+    { stdin: "1\n-5", expected_stdout: "int: -5\n" }
+  ]}
+  hints={[
+    "This exercise is mostly complete — run it to see the tagged-union pattern in action.",
+    "In a real program you'd use a struct with an enum tag and a union for the data."
+  ]}
+/>
+
+## What's Next
+
+You've mastered custom data types in C! Next module: **Linked Lists** — putting structs and pointers together to build your first dynamic data structure.

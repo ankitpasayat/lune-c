@@ -1,0 +1,454 @@
+---
+title: "Doubly Linked List"
+module: "Linked Lists"
+order: 2
+description: "Add backward traversal with prev pointers — insert, delete, and traverse in both directions."
+difficulty: "intermediate"
+---
+
+In the last lesson, every time we deleted a node from a singly linked list, we had to track the *previous* node manually. We'd scan forward checking `curr->next->data` instead of `curr->data`, always looking one step ahead, because singly linked nodes don't know who came before them.
+
+What if each node just... *remembered* its predecessor?
+
+That's exactly what a doubly linked list does. Each node carries two pointers: `next` (same as before) and `prev` (pointing back to the previous node). This costs an extra pointer of memory per node — typically 8 bytes on a 64-bit system — but it unlocks two powerful abilities:
+
+1. **Backward traversal**: You can walk the list in either direction. Given the tail, you can reach the head. Given any node in the middle, you can go either way.
+2. **O(1) deletion when you have the node**: If someone hands you a pointer to a node and says "delete this," you can do it immediately. No scanning needed. The node itself tells you who's before and after it.
+
+Think of a singly linked list as a one-way street where every house only knows the address of the *next* house. A doubly linked list is a two-way street — every house knows the address of both its neighbors. You can walk the neighborhood in either direction, and if you need to demolish a house, you can tell both neighbors to point to each other without asking around.
+
+## Node Structure
+
+The struct now has three fields instead of two. Every time you create or link nodes, you're managing twice as many pointers — this is the core complexity cost of doubly linked lists.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+DNode *create_node(int data) {
+    DNode *n = malloc(sizeof(DNode));
+    n->data = data;
+    n->prev = NULL;
+    n->next = NULL;
+    return n;
+}
+
+void print_forward(DNode *head) {
+    printf("Forward:  ");
+    DNode *curr = head;
+    while (curr != NULL) {
+        printf("%d ", curr->data);
+        curr = curr->next;
+    }
+    printf("\\n");
+}
+
+void print_backward(DNode *tail) {
+    printf("Backward: ");
+    DNode *curr = tail;
+    while (curr != NULL) {
+        printf("%d ", curr->data);
+        curr = curr->prev;
+    }
+    printf("\\n");
+}
+
+void free_list(DNode *head) {
+    while (head) {
+        DNode *t = head;
+        head = head->next;
+        free(t);
+    }
+}
+
+int main() {
+    DNode *a = create_node(10);
+    DNode *b = create_node(20);
+    DNode *c = create_node(30);
+
+    a->next = b;
+    b->prev = a;
+    b->next = c;
+    c->prev = b;
+
+    print_forward(a);
+    print_backward(c);
+
+    free_list(a);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+<Callout type="info">
+The tradeoff: doubly linked lists use more memory (an extra pointer per node) but make operations like "delete this node" and "insert before" much easier since you can walk backward.
+</Callout>
+
+Notice how `print_backward` is a mirror image of `print_forward` — the only difference is following `prev` instead of `next`. This symmetry is the whole point. A singly linked list is a one-way conveyor belt; a doubly linked list is a corridor you can walk in either direction.
+
+## Insertion at Head
+
+Inserting at the head of a doubly linked list has one extra step compared to the singly linked version. You still create the node and point its `next` at the old head — but now you also have to set the old head's `prev` pointer back to the new node.
+
+**The order matters here.** You must set `new_node->next = head` *before* changing `head->prev`, because if the list was empty (`head == NULL`), accessing `head->prev` would segfault. That's why the `if (head != NULL)` guard exists.
+
+```
+  Before:     head -> [10] <-> [20] <-> [30] -> NULL
+
+  Step 1:     Create [5], set [5]->next = head (i.e., [10])
+  Step 2:     Set [10]->prev = [5]
+
+  After:      head -> [5] <-> [10] <-> [20] <-> [30] -> NULL
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+DNode *create_node(int data) {
+    DNode *n = malloc(sizeof(DNode));
+    n->data = data;
+    n->prev = NULL;
+    n->next = NULL;
+    return n;
+}
+
+DNode *push_front(DNode *head, int data) {
+    DNode *new_node = create_node(data);
+    new_node->next = head;
+    if (head != NULL) {
+        head->prev = new_node;
+    }
+    return new_node;  // new_node is the new head
+}
+
+void print_list(DNode *head) {
+    while (head) {
+        printf("%d ", head->data);
+        head = head->next;
+    }
+    printf("\\n");
+}
+
+void free_list(DNode *h) {
+    while (h) { DNode *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    DNode *head = NULL;
+    head = push_front(head, 30);
+    head = push_front(head, 20);
+    head = push_front(head, 10);
+
+    print_list(head);  // 10 20 30
+    free_list(head);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Insertion at Tail
+
+Tail insertion still requires walking to the end (unless you maintain a separate tail pointer). The mechanics are the same as singly linked, plus one extra pointer assignment:
+
+```
+  Walking...  head -> [10] <-> [20] <-> [30]    NULL
+                                          ^
+                                       curr stops here (curr->next == NULL)
+
+  Step 1: Create [40], set curr->next = [40]
+  Step 2: Set [40]->prev = curr
+
+  After:  head -> [10] <-> [20] <-> [30] <-> [40] -> NULL
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+DNode *create_node(int data) {
+    DNode *n = malloc(sizeof(DNode));
+    n->data = data;
+    n->prev = NULL;
+    n->next = NULL;
+    return n;
+}
+
+DNode *push_back(DNode *head, int data) {
+    DNode *new_node = create_node(data);
+    if (head == NULL) return new_node;
+
+    DNode *curr = head;
+    while (curr->next != NULL) {
+        curr = curr->next;
+    }
+    curr->next = new_node;
+    new_node->prev = curr;
+    return head;
+}
+
+void print_list(DNode *head) {
+    while (head) {
+        printf("%d ", head->data);
+        head = head->next;
+    }
+    printf("\\n");
+}
+
+void free_list(DNode *h) {
+    while (h) { DNode *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    DNode *head = NULL;
+    head = push_back(head, 10);
+    head = push_back(head, 20);
+    head = push_back(head, 30);
+
+    print_list(head);  // 10 20 30
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+To make tail insertion O(1), keep a separate `tail` pointer alongside `head`. Many real implementations do this.
+</Callout>
+
+## Deletion
+
+Here's where doubly linked lists truly shine compared to their singly linked cousins. Remember the contortion we went through for singly linked deletion — scanning with `curr->next->data`, always peering one step ahead?
+
+With a doubly linked list, deletion is elegantly direct. You find the node to delete (`curr`), then tell its neighbors to point to each other:
+
+```
+  Before:   ... <-> [A] <-> [B] <-> [C] <-> ...
+                            ^^^
+                         deleting B
+
+  Step 1:   A->next = C        (A skips over B, points to C)
+  Step 2:   C->prev = A        (C skips over B, points back to A)
+  Step 3:   free(B)
+
+  After:    ... <-> [A] <-> [C] <-> ...
+```
+
+**Why does order matter?** In this case, steps 1 and 2 are interchangeable — both A and C are still reachable through B's pointers until we free B. The critical thing is to do *both* re-links *before* the free. Once you free B, its `prev` and `next` fields are garbage.
+
+There are two edge cases to handle:
+- **Deleting the head**: There's no `prev` neighbor to update. Just advance head to `curr->next`.
+- **Deleting the tail**: There's no `next` neighbor to update. Just set `curr->prev->next = NULL`.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+DNode *create_node(int d) {
+    DNode *n = malloc(sizeof(DNode));
+    n->data = d; n->prev = NULL; n->next = NULL;
+    return n;
+}
+
+DNode *delete_node(DNode *head, int target) {
+    DNode *curr = head;
+    while (curr != NULL && curr->data != target) {
+        curr = curr->next;
+    }
+    if (curr == NULL) return head;  // not found
+
+    // Re-link neighbors
+    if (curr->prev != NULL) {
+        curr->prev->next = curr->next;
+    } else {
+        head = curr->next;  // deleting head
+    }
+    if (curr->next != NULL) {
+        curr->next->prev = curr->prev;
+    }
+
+    free(curr);
+    return head;
+}
+
+void print_list(DNode *h) {
+    while (h) { printf("%d ", h->data); h = h->next; }
+    printf("\\n");
+}
+
+void free_list(DNode *h) {
+    while (h) { DNode *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    DNode *head = NULL;
+    for (int i = 5; i >= 1; i--) {
+        DNode *n = create_node(i * 10);
+        n->next = head;
+        if (head) head->prev = n;
+        head = n;
+    }
+
+    printf("Before: ");
+    print_list(head);
+
+    head = delete_node(head, 30);
+    printf("After deleting 30: ");
+    print_list(head);
+
+    head = delete_node(head, 10);
+    printf("After deleting 10: ");
+    print_list(head);
+
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Wait — the deletion is still O(n)? Yes, because we still have to *find* the node first, which takes a linear scan. The improvement is that once you *have* a pointer to the node, the unlinking itself is O(1). In a singly linked list, even having a pointer to the node isn't enough — you'd still need to find its predecessor. This distinction matters in practice: many algorithms and data structures (like LRU caches) maintain direct pointers to nodes and rely on O(1) deletion.
+
+## Singly vs Doubly Linked Lists
+
+| Operation | Singly | Doubly |
+|-----------|--------|--------|
+| Push front | O(1) | O(1) |
+| Push back (no tail ptr) | O(n) | O(n) |
+| Delete by pointer | O(n)* | O(1) |
+| Memory per node | 1 pointer | 2 pointers |
+| Backward traversal | No | Yes |
+
+*Singly linked deletion needs the previous node, requiring a scan.
+
+The choice between singly and doubly linked lists is a classic space-time tradeoff. If you only traverse forward and rarely delete by pointer, the extra `prev` pointer wastes memory. If you need reverse traversal or frequent delete-by-pointer, it pays for itself many times over.
+
+## Exercise: Build and Print Backward
+
+<Exercise
+  title="Print list in reverse"
+  description="Read N, then N integers. Build a doubly linked list in the order given. Print the elements in reverse order, space-separated."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build doubly linked list
+    // Find the tail
+    // Print backward
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n1 2 3 4", expected_stdout: "4 3 2 1\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "30 20 10\n" }
+  ]}
+  hints={[
+    "Use push_back to maintain insertion order.",
+    "After building, walk to the end to find the tail.",
+    "From the tail, follow prev pointers to print in reverse."
+  ]}
+/>
+
+## Exercise: Insert at Position
+
+<Exercise
+  title="Insert at position K"
+  description="Read N, then N integers to build a list. Read K (0-indexed position) and V (value). Insert V at position K. Print the resulting list. If K equals the list length, append at the end."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build doubly linked list of n elements
+    // Read k and v
+    // Insert v at position k
+    // Print list
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n10 20 30\n1 15", expected_stdout: "10 15 20 30\n" },
+    { stdin: "3\n10 20 30\n0 5", expected_stdout: "5 10 20 30\n" },
+    { stdin: "3\n10 20 30\n3 40", expected_stdout: "10 20 30 40\n" }
+  ]}
+  hints={[
+    "Walk to position k-1 (the node before the insertion point).",
+    "Create the new node and update four pointers: new->next, new->prev, and the neighbors.",
+    "Handle edge cases: inserting at position 0 (new head) and at the end (append)."
+  ]}
+/>
+
+## Exercise: Delete All Occurrences
+
+<Exercise
+  title="Delete all occurrences"
+  description="Read N, then N integers to build a list. Read a target value. Delete ALL nodes with that value. Print the remaining list. If the list becomes empty, print 'empty'."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build list, read target, delete all with that value
+    // Print result or "empty"
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 2 4\n2", expected_stdout: "1 3 4\n" },
+    { stdin: "3\n5 5 5\n5", expected_stdout: "empty\n" },
+    { stdin: "4\n10 20 30 40\n99", expected_stdout: "10 20 30 40\n" }
+  ]}
+  hints={[
+    "Iterate through the list. When you find a match, save curr->next before freeing.",
+    "Re-link prev and next around the deleted node.",
+    "Be careful when deleting the head — update the head pointer."
+  ]}
+/>
+
+## What's Next
+
+We'll look at **circular linked lists** — a variation where the last node points back to the first.

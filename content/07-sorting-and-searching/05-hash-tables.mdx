@@ -1,0 +1,435 @@
+---
+title: "Hash Tables"
+module: "Sorting & Searching"
+order: 5
+description: "O(1) average-case lookups using hashing, collision resolution, and load factors."
+difficulty: "intermediate"
+---
+
+Arrays let you access any element in O(1) — *if you know the index*. But what if you want to look up a value by a **name**, a **word**, or an **arbitrary key**? You'd have to search the entire array, which is O(n).
+
+A hash table solves this: it lets you go from *any key* to its stored value in O(1) average time. It's the data structure behind dictionaries, caches, symbol tables, databases indexes — nearly every program uses one.
+
+## The Core Idea: Turning Keys Into Indices
+
+Here's the magic trick. Suppose you have an array of 16 slots and a string key like `"apple"`. If you could convert `"apple"` into a number between 0 and 15, you could store the value directly at that index — and later retrieve it by computing the same number.
+
+That conversion is called a **hash function**. It takes a key of any type and transforms it into an integer (the **hash code**), which is then reduced to a valid array index (typically using `% TABLE_SIZE`).
+
+```
+key "apple" → hash function → 2847531 → % 16 → index 11
+```
+
+Now `arr[11]` holds the value associated with `"apple"`. To look it up later, you compute the same hash, jump to index 11, and there it is. No searching. No scanning. Direct access.
+
+That's why hash tables are O(1) on average: the hash function computes the index in constant time, and array access is constant time. You've turned a search problem into a math problem.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define TABLE_SIZE 16
+
+// Simple hash function for strings
+unsigned int hash(const char *key) {
+    unsigned int h = 0;
+    while (*key) {
+        h = h * 31 + (unsigned char)(*key);
+        key++;
+    }
+    return h % TABLE_SIZE;
+}
+
+int main() {
+    const char *words[] = {"apple", "banana", "cherry", "date", "elderberry"};
+
+    for (int i = 0; i < 5; i++) {
+        printf("hash(\\"%s\\") = %u\\n", words[i], hash(words[i]));
+    }
+
+    return 0;
+}
+`} time="O(1) hash" space="O(1)" />
+
+## What Makes a Good Hash Function
+
+Not all hash functions are created equal. A bad one destroys the O(1) promise. A good hash function has three properties:
+
+**Deterministic**: The same key must always produce the same hash. If `hash("apple")` returns 11 on insert but 7 on lookup, you'll never find your data. This sounds obvious, but it means you can't use things like random numbers or memory addresses (which change between runs) in your hash computation.
+
+**Uniform distribution**: A good hash function spreads keys evenly across all available slots. If 80% of your keys hash to the same 3 slots, those slots become crowded and lookups slow to O(n). The hash function `h = h * 31 + c` (used above) works well because multiplying by 31 (a prime) and adding each character creates an avalanche effect — small changes in input produce very different outputs.
+
+**Fast to compute**: The whole point of hashing is speed. A hash function that takes O(n^2) to compute defeats the purpose. For strings, you typically scan each character once — O(k) where `k` is the string length. For integers, a single multiplication and modulus suffices.
+
+The `* 31` hash function we use is a classic choice (Java's `String.hashCode()` uses the same approach). Why 31? It's prime (reducing patterns in the distribution), it's odd (preventing loss of information from bit shifting), and `31 * x` can be computed as `(x << 5) - x` which is fast on most hardware.
+
+## Collisions Are Inevitable
+
+Here's the catch: you have (potentially) infinite keys but only `TABLE_SIZE` slots. By the pigeonhole principle, some keys will hash to the same index. When two keys map to the same slot, that's a **collision**, and you need a strategy to handle it.
+
+There are two main approaches: *chaining* and *open addressing*.
+
+## Chaining (Separate Chaining)
+
+The simplest collision strategy: each slot in the array doesn't hold a single value — it holds a **linked list** of all key-value pairs that hashed to that index.
+
+Think of it like a row of mailboxes at an apartment building. Each mailbox (array slot) is numbered. When a letter (key-value pair) arrives, you compute which mailbox it goes into. If multiple letters share the same mailbox, they all pile up inside it. To find a specific letter, you open the mailbox and search through its contents.
+
+When the table is sparsely populated, most chains have length 0 or 1, and lookups are effectively O(1). As the table fills up, chains get longer and performance degrades toward O(n).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define TABLE_SIZE 16
+
+typedef struct Entry {
+    char key[64];
+    int value;
+    struct Entry *next;
+} Entry;
+
+typedef struct {
+    Entry *buckets[TABLE_SIZE];
+} HashTable;
+
+unsigned int hash(const char *key) {
+    unsigned int h = 0;
+    while (*key) {
+        h = h * 31 + (unsigned char)(*key);
+        key++;
+    }
+    return h % TABLE_SIZE;
+}
+
+void ht_init(HashTable *ht) {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        ht->buckets[i] = NULL;
+    }
+}
+
+void ht_set(HashTable *ht, const char *key, int value) {
+    unsigned int idx = hash(key);
+
+    // Check if key already exists
+    Entry *curr = ht->buckets[idx];
+    while (curr != NULL) {
+        if (strcmp(curr->key, key) == 0) {
+            curr->value = value;  // update
+            return;
+        }
+        curr = curr->next;
+    }
+
+    // Insert new entry at head of chain
+    Entry *entry = malloc(sizeof(Entry));
+    strncpy(entry->key, key, 63);
+    entry->key[63] = '\\0';
+    entry->value = value;
+    entry->next = ht->buckets[idx];
+    ht->buckets[idx] = entry;
+}
+
+int ht_get(HashTable *ht, const char *key, int *out) {
+    unsigned int idx = hash(key);
+    Entry *curr = ht->buckets[idx];
+    while (curr != NULL) {
+        if (strcmp(curr->key, key) == 0) {
+            *out = curr->value;
+            return 1;  // found
+        }
+        curr = curr->next;
+    }
+    return 0;  // not found
+}
+
+void ht_free(HashTable *ht) {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        Entry *curr = ht->buckets[i];
+        while (curr) {
+            Entry *temp = curr;
+            curr = curr->next;
+            free(temp);
+        }
+    }
+}
+
+int main() {
+    HashTable ht;
+    ht_init(&ht);
+
+    ht_set(&ht, "apple", 5);
+    ht_set(&ht, "banana", 3);
+    ht_set(&ht, "cherry", 8);
+    ht_set(&ht, "apple", 10);  // update
+
+    int val;
+    const char *keys[] = {"apple", "banana", "grape"};
+    for (int i = 0; i < 3; i++) {
+        if (ht_get(&ht, keys[i], &val)) {
+            printf("%s: %d\\n", keys[i], val);
+        } else {
+            printf("%s: not found\\n", keys[i]);
+        }
+    }
+
+    ht_free(&ht);
+    return 0;
+}
+`} time="O(1) average" space="O(n)" />
+
+<Callout type="info">
+With a good hash function and reasonable load factor (number of entries / table size), most chains are short (length 0 or 1), giving O(1) average performance.
+</Callout>
+
+## Load Factor: The Key to Performance
+
+The **load factor** is `n / TABLE_SIZE` — the average number of entries per bucket. It's the single most important number for hash table performance.
+
+- **Load factor 0.5**: On average, half the buckets have one entry, half are empty. Lookups are fast.
+- **Load factor 1.0**: On average, every bucket has one entry. Still manageable with a good hash function.
+- **Load factor 5.0**: On average, each bucket has a chain of 5 entries. Now every lookup scans 5 entries. You've lost the O(1) advantage.
+
+Think of it like a parking lot. If the lot has 100 spaces and 30 cars (load factor 0.3), finding a spot is easy. At 90 cars (load factor 0.9), you start circling. At 200 cars for 100 spaces (load factor 2.0 — only possible with chaining, where you stack cars), it's chaos.
+
+The rule of thumb: **keep the load factor below 0.75**. When it exceeds that threshold, you need to resize.
+
+## Open Addressing (Linear Probing)
+
+Instead of storing chains at each slot, open addressing stores entries *directly in the array*. When a collision occurs, you probe for the next empty slot.
+
+The simplest probing strategy is **linear probing**: if slot `h` is taken, try `h+1`, then `h+2`, then `h+3`, and so on (wrapping around to 0 when you hit the end).
+
+Think of it like parking on a street: you drive to your preferred spot. If it's taken, you try the next spot. And the next. You eventually find an empty one (as long as the street isn't completely full).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+#define TABLE_SIZE 16
+#define EMPTY -1
+#define DELETED -2
+
+typedef struct {
+    int keys[TABLE_SIZE];
+    int values[TABLE_SIZE];
+} IntHashTable;
+
+void ht_init(IntHashTable *ht) {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        ht->keys[i] = EMPTY;
+    }
+}
+
+int hash_int(int key) {
+    unsigned int k = (unsigned int)key;
+    return k % TABLE_SIZE;
+}
+
+void ht_set(IntHashTable *ht, int key, int value) {
+    int idx = hash_int(key);
+    int start = idx;
+
+    do {
+        if (ht->keys[idx] == EMPTY || ht->keys[idx] == DELETED || ht->keys[idx] == key) {
+            ht->keys[idx] = key;
+            ht->values[idx] = value;
+            return;
+        }
+        idx = (idx + 1) % TABLE_SIZE;
+    } while (idx != start);
+
+    printf("Table full!\\n");
+}
+
+int ht_get(IntHashTable *ht, int key, int *out) {
+    int idx = hash_int(key);
+    int start = idx;
+
+    do {
+        if (ht->keys[idx] == EMPTY) return 0;
+        if (ht->keys[idx] == key) {
+            *out = ht->values[idx];
+            return 1;
+        }
+        idx = (idx + 1) % TABLE_SIZE;
+    } while (idx != start);
+
+    return 0;
+}
+
+int main() {
+    IntHashTable ht;
+    ht_init(&ht);
+
+    ht_set(&ht, 42, 100);
+    ht_set(&ht, 17, 200);
+    ht_set(&ht, 58, 300);  // 58 % 16 == 10, same bucket as 42
+
+    int val;
+    int tests[] = {42, 17, 58, 99};
+    for (int i = 0; i < 4; i++) {
+        if (ht_get(&ht, tests[i], &val)) {
+            printf("key %d -> %d\\n", tests[i], val);
+        } else {
+            printf("key %d -> not found\\n", tests[i]);
+        }
+    }
+
+    return 0;
+}
+`} time="O(1) average" space="O(n)" />
+
+### Chaining vs Open Addressing
+
+Both strategies handle collisions, but they have different tradeoffs:
+
+**Chaining** is simpler to implement and handles high load factors gracefully (chains just get longer). It uses extra memory for linked list pointers, and the pointer-chasing is cache-unfriendly — each node could be anywhere in memory.
+
+**Open addressing** stores everything in the array itself — no pointers, no extra allocations. This is cache-friendly because probing walks through contiguous memory. But it's fragile: as the table fills up, long clusters of occupied slots form, and probe sequences grow. Deletion is also tricky — you can't just empty a slot, because that would break probe chains for other keys (hence the `DELETED` sentinel).
+
+The mental model: chaining is like apartment mailboxes (multiple items per box). Open addressing is like street parking (one car per spot, find the next one if yours is taken).
+
+<Callout type="warning">
+Linear probing suffers from **clustering**: consecutive occupied slots create long probe sequences. Keep the load factor below 0.7 and resize when needed.
+</Callout>
+
+## Why Resizing Is Necessary
+
+As you add more entries, the load factor grows, and performance degrades. The fix is **resizing**: allocating a new, larger array (typically double the size) and reinserting all existing entries.
+
+Why *reinserting* and not just copying? Because the hash function uses `% TABLE_SIZE` to compute the index. If `TABLE_SIZE` changes, the same key maps to a *different* index. You must rehash every entry with the new table size.
+
+Resizing is expensive — it's O(n) to rehash everything. But it happens infrequently. If you double the table size each time, you need to resize after inserting n elements, then not again until 2n, then 4n, and so on. The average cost per insert, spread over all inserts, works out to O(1). This is called **amortized O(1)** — each individual operation *might* be expensive, but averaged over many operations, the cost is constant.
+
+Think of it like filling a moving truck. Most days, you just add a box (O(1)). Occasionally, the truck is full and you need to rent a bigger truck and reload everything (O(n)). But since the truck gets bigger each time, the "reload days" become exponentially rarer. Over a lifetime of moving boxes, the average cost per box stays constant.
+
+## Hash Table Complexity
+
+| Operation | Average | Worst |
+|-----------|---------|-------|
+| Insert | O(1) | O(n) |
+| Lookup | O(1) | O(n) |
+| Delete | O(1) | O(n) |
+
+The O(n) worst case happens when all keys collide — every key maps to the same index. With a good hash function, this is astronomically unlikely for random data. But it's not impossible: an adversary who knows your hash function could craft keys that all collide. This is why some systems use randomized hash functions or switch to balanced trees when chains get too long (like Java's `HashMap` does).
+
+In practice, with a good hash function, a reasonable load factor, and timely resizing, hash tables deliver reliable O(1) performance for millions of entries.
+
+## Exercise: Word Frequency Counter
+
+<Exercise
+  title="Count word frequencies"
+  description="Read N words (one per line). Print each unique word followed by its count, in the order first seen. Each word is at most 50 characters."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_WORDS 100
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char words[MAX_WORDS][51];
+    int counts[MAX_WORDS];
+    int unique = 0;
+
+    for (int i = 0; i < n; i++) {
+        char word[51];
+        scanf("%50s", word);
+
+        // Check if word already seen
+        // If yes, increment count
+        // If no, add to words[] and set count to 1
+    }
+
+    for (int i = 0; i < unique; i++) {
+        printf("%s %d\\n", words[i], counts[i]);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\napple banana apple cherry banana", expected_stdout: "apple 2\nbanana 2\ncherry 1\n" },
+    { stdin: "3\nhello hello hello", expected_stdout: "hello 3\n" },
+    { stdin: "4\na b c d", expected_stdout: "a 1\nb 1\nc 1\nd 1\n" }
+  ]}
+  hints={[
+    "For each word, scan through the unique words array to find a match.",
+    "If found, increment its count. If not, add it as a new unique word.",
+    "This is O(n²) with linear scan — a hash table would make it O(n), but the simple approach works for small input."
+  ]}
+/>
+
+## Exercise: Two Sum with Hashing
+
+<Exercise
+  title="Two sum"
+  description="Read N, then N integers, then a target sum S. Find two distinct indices i and j where arr[i] + arr[j] == S. Print 'i j' (0-indexed, smaller index first). There is always exactly one solution."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int target;
+    scanf("%d", &target);
+
+    // Find two numbers that sum to target
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n2 7 11 15\n9", expected_stdout: "0 1\n" },
+    { stdin: "3\n3 2 4\n6", expected_stdout: "1 2\n" },
+    { stdin: "5\n1 5 3 7 2\n8", expected_stdout: "1 3\n" }
+  ]}
+  hints={[
+    "Brute force: try all pairs with two nested loops. O(n²) but simple.",
+    "For O(n): for each element, check if (target - arr[i]) was seen before using a hash table.",
+    "The brute force approach is acceptable for this exercise size."
+  ]}
+/>
+
+## Exercise: Find Duplicates
+
+<Exercise
+  title="First duplicate"
+  description="Read N, then N integers. Print the first value that appears more than once. If no duplicates exist, print 'none'."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Find first duplicate
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n1 2 3 2 4 1", expected_stdout: "2\n" },
+    { stdin: "4\n1 2 3 4", expected_stdout: "none\n" },
+    { stdin: "3\n5 5 5", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "Keep track of which values you've seen.",
+    "For small value ranges, use a 'seen' array.",
+    "For each element: if already seen, it's the first duplicate. Otherwise mark it as seen."
+  ]}
+/>
+
+## What's Next
+
+Phase 2 complete! You've learned all the core data structures and algorithms. Next up: **Phase 3 — Systems & Low-Level Programming**, starting with file I/O.

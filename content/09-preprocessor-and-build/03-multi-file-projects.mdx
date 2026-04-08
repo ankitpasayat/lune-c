@@ -1,0 +1,253 @@
+---
+title: "Multi-File Projects"
+module: "The Preprocessor & Build System"
+order: 3
+description: "Header files, extern, static, and separate compilation — organizing larger C programs."
+difficulty: "intermediate"
+---
+
+Real C projects span many files. Understanding how to split code and link it together is essential.
+
+## Why Multiple Files?
+
+- **Organization**: group related functions together
+- **Compilation speed**: only recompile changed files
+- **Reusability**: share code between projects
+- **Encapsulation**: hide implementation details
+
+## Header Files (.h) vs Source Files (.c)
+
+**Header files** declare interfaces. **Source files** implement them.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// ===== Imagine this is "math_utils.h" =====
+#ifndef MATH_UTILS_H
+#define MATH_UTILS_H
+
+int add(int a, int b);
+int multiply(int a, int b);
+int factorial(int n);
+
+#endif
+// ===== End of math_utils.h =====
+
+// ===== Imagine this is "math_utils.c" =====
+// #include "math_utils.h"
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int multiply(int a, int b) {
+    return a * b;
+}
+
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+// ===== End of math_utils.c =====
+
+// ===== This is "main.c" =====
+// #include "math_utils.h"
+
+int main() {
+    printf("3 + 4 = %d\\n", add(3, 4));
+    printf("3 * 4 = %d\\n", multiply(3, 4));
+    printf("5! = %d\\n", factorial(5));
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+In a real project, these would be three separate files. The header declares function **prototypes** (signatures without bodies). The source file defines the actual implementations. `main.c` includes the header to know about the functions.
+</Callout>
+
+## The extern Keyword
+
+`extern` declares a variable that's defined in another file:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// ===== globals.c =====
+int global_counter = 0;  // DEFINITION (creates the variable)
+
+// ===== main.c =====
+// extern int global_counter;  // DECLARATION (references it)
+// In this demo, we use the definition directly.
+
+void increment(void) {
+    global_counter++;
+}
+
+int get_count(void) {
+    return global_counter;
+}
+
+int main() {
+    increment();
+    increment();
+    increment();
+    printf("Counter: %d\\n", get_count());
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Global variables shared across files should be declared `extern` in the header and defined (without `extern`) in exactly one `.c` file. Defining the same variable in two files causes linker errors.
+</Callout>
+
+## The static Keyword (File Scope)
+
+`static` on a global variable or function limits its visibility to the current file:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// static functions and variables are "private" to this file
+static int internal_counter = 0;
+
+static void increment_internal(void) {
+    internal_counter++;
+}
+
+// "Public" function — visible to other files
+int get_count(void) {
+    return internal_counter;
+}
+
+void do_work(void) {
+    increment_internal();  // only this file can call this
+    increment_internal();
+}
+
+int main() {
+    do_work();
+    printf("Count: %d\\n", get_count());
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Compilation Steps
+
+```bash
+# Compile each .c file separately into object files
+gcc -c main.c -o main.o
+gcc -c math_utils.c -o math_utils.o
+
+# Link object files into executable
+gcc main.o math_utils.o -o program
+```
+
+This is **separate compilation**: each `.c` file is compiled independently. Only changed files need recompilation.
+
+## Project Structure
+
+A typical C project layout:
+
+```
+project/
+├── include/
+│   ├── math_utils.h
+│   └── string_utils.h
+├── src/
+│   ├── main.c
+│   ├── math_utils.c
+│   └── string_utils.c
+├── tests/
+│   └── test_math.c
+└── Makefile
+```
+
+## Common Mistakes
+
+| Mistake | Symptom | Fix |
+|---------|---------|-----|
+| Missing include guard | "redefinition" errors | Add `#ifndef`/`#define`/`#endif` |
+| Definition in header | "multiple definition" linker error | Put only declarations in `.h` |
+| Missing `extern` | "multiple definition" of global | Use `extern` in header, define in one `.c` |
+| Circular includes | Infinite loop at compile time | Reorganize headers, forward-declare |
+
+## Exercise: Function Prototypes
+
+<Exercise
+  title="Declaration before use"
+  description="Read two integers. Print their sum, difference, and product on separate lines. Write the calculations as separate functions."
+  starterCode={`#include <stdio.h>
+
+// Function prototypes (like in a header file)
+int add(int a, int b);
+int subtract(int a, int b);
+int multiply(int a, int b);
+
+int main() {
+    int a, b;
+    scanf("%d %d", &a, &b);
+    printf("%d\\n", add(a, b));
+    printf("%d\\n", subtract(a, b));
+    printf("%d\\n", multiply(a, b));
+    return 0;
+}
+
+// Implementations (like in a .c file)
+int add(int a, int b) { return a + b; }
+int subtract(int a, int b) { return a - b; }
+int multiply(int a, int b) { return a * b; }
+`}
+  testCases={[
+    { stdin: "10 3", expected_stdout: "13\n7\n30\n" },
+    { stdin: "5 5", expected_stdout: "10\n0\n25\n" },
+    { stdin: "-2 3", expected_stdout: "1\n-5\n-6\n" }
+  ]}
+  hints={[
+    "The prototypes at the top tell the compiler the function signatures.",
+    "The implementations at the bottom provide the actual code.",
+    "This mirrors the header/source file split in real projects."
+  ]}
+/>
+
+## Exercise: Static Counter
+
+<Exercise
+  title="Encapsulated counter"
+  description="Implement a counter using a static variable inside a function. Read N operations. Each operation is either 'I' (increment) or 'G' (get). For each 'G', print the current count."
+  starterCode={`#include <stdio.h>
+
+int counter(int increment) {
+    static int count = 0;  // persists between calls
+    count += increment;
+    return count;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char op;
+    for (int i = 0; i < n; i++) {
+        scanf(" %c", &op);
+        if (op == 'I') {
+            counter(1);
+        } else if (op == 'G') {
+            printf("%d\\n", counter(0));
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\nI I I G I", expected_stdout: "3\n" },
+    { stdin: "4\nG I G I", expected_stdout: "0\n1\n" },
+    { stdin: "6\nI I G I I G", expected_stdout: "2\n4\n" }
+  ]}
+  hints={[
+    "The static variable inside counter() retains its value between function calls.",
+    "Pass 1 to increment, 0 to just read the value.",
+    "This pattern encapsulates state — similar to what extern globals do across files, but safer."
+  ]}
+/>
+
+## What's Next
+
+The final piece of the build puzzle: **Makefiles** — automating the compilation of multi-file projects.

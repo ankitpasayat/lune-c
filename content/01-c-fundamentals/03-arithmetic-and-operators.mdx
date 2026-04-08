@@ -1,0 +1,198 @@
+---
+title: "Arithmetic and Operators"
+module: "C Fundamentals"
+order: 3
+description: "Math in C — integer division, modulo, increment/decrement, and operator precedence."
+difficulty: "beginner"
+---
+
+C gives you direct access to the CPU's arithmetic instructions. This makes math fast, but it also means some operations behave differently than you might expect — especially integer division.
+
+## Basic Arithmetic
+
+The five arithmetic operators work on numbers:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int a = 17, b = 5;\n    \n    printf("a + b = %d\\n", a + b);   // Addition\n    printf("a - b = %d\\n", a - b);   // Subtraction\n    printf("a * b = %d\\n", a * b);   // Multiplication\n    printf("a / b = %d\\n", a / b);   // Division (integer!)\n    printf("a %% b = %d\\n", a % b);  // Modulo (remainder)\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Notice that `17 / 5 = 3`, not `3.4`. When both operands are integers, C performs **integer division** — it truncates toward zero. This is one of the most common sources of bugs for beginners.
+</Callout>
+
+## Integer Division vs Float Division
+
+If you want decimal results, at least one operand must be a floating-point type:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int a = 17, b = 5;\n    \n    printf("int / int:     %d\\n", a / b);           // 3\n    printf("float / int:   %.2f\\n", 17.0 / 5);      // 3.40\n    printf("int / float:   %.2f\\n", 17 / 5.0);      // 3.40\n    printf("cast to float: %.2f\\n", (float)a / b);   // 3.40\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+The `(float)a` syntax is called a **type cast** — it temporarily treats `a` as a float for this operation.
+
+## The Modulo Operator
+
+The `%` operator gives the **remainder** after integer division. It's incredibly useful:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // Check if a number is even or odd\n    for (int i = 0; i < 6; i++) {\n        if (i % 2 == 0) {\n            printf("%d is even\\n", i);\n        } else {\n            printf("%d is odd\\n", i);\n        }\n    }\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+Common uses of modulo:
+- `n % 2 == 0` — check if even
+- `n % 10` — get the last digit
+- `n % 60` — wrap around (like seconds in a minute)
+
+## Increment and Decrement
+
+C has shorthand for adding or subtracting 1:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int x = 5;\n    \n    x++;        // x is now 6 (post-increment)\n    printf("After x++: %d\\n", x);\n    \n    x--;        // x is now 5 again (post-decrement)\n    printf("After x--: %d\\n", x);\n    \n    ++x;        // x is now 6 (pre-increment)\n    printf("After ++x: %d\\n", x);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+The difference between `x++` (post) and `++x` (pre) matters when used in expressions. `x++` returns the old value, then increments. `++x` increments first, then returns the new value. When used as a standalone statement, they're identical.
+</Callout>
+
+## Type Conversions
+
+When you mix types in an expression, C automatically converts the "smaller" type to the "larger" type. This is called **implicit conversion** (or promotion):
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int i = 7;\n    float f = 2.5;\n    double d = 1.0;\n    char c = 'A';  // ASCII 65\n    \n    // Implicit conversions — C promotes automatically\n    printf("int + float  = %.2f\\n", i + f);    // i promoted to float\n    printf("int + double = %.2f\\n", i + d);    // i promoted to double\n    printf("char + int   = %d\\n", c + 1);      // c promoted to int (66 = 'B')\n    \n    // Dangerous: narrowing (large type into small type)\n    int truncated = 3.99;         // 3 — decimal part is lost!\n    char overflow = 300;          // Undefined for signed char (max 127)\n    printf("3.99 -> int: %d\\n", truncated);\n    \n    // Explicit cast — you tell C "I know what I'm doing"\n    double ratio = (double)7 / 2;  // 3.5, not 3\n    printf("7/2 with cast: %.1f\\n", ratio);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+The **conversion hierarchy** is: `char` → `int` → `long` → `float` → `double`. When two types meet in an expression, the smaller one is promoted to the larger one. Going the other direction (e.g., `double` → `int`) truncates and may lose data — the compiler usually warns about this.
+
+<Callout type="warning">
+Implicit narrowing is a common source of bugs. `int x = 3.99;` silently gives you `3`. Always use an explicit cast `(int)3.99` when you intend to truncate, so readers know it's deliberate.
+</Callout>
+
+## The Comma Operator
+
+C has a rarely-used **comma operator** that evaluates two expressions and returns the second one:
+
+```c
+int x = (1, 2, 3);  // x = 3 (evaluates all, keeps last)
+
+// Most common in for loops with multiple variables:
+for (int i = 0, j = 10; i < j; i++, j--) { ... }
+```
+
+You'll most often see commas in `for` loop headers. Outside of that, the comma operator is rare and usually makes code harder to read.
+
+## Math Library Functions
+
+C's arithmetic operators handle the basics, but for anything beyond add/subtract/multiply/divide, you need `<math.h>`:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <math.h>\n\nint main() {\n    printf("sqrt(144)  = %.1f\\n", sqrt(144.0));     // 12.0\n    printf("pow(2, 10) = %.0f\\n", pow(2.0, 10.0));   // 1024\n    printf("ceil(3.2)  = %.1f\\n", ceil(3.2));         // 4.0\n    printf("floor(3.8) = %.1f\\n", floor(3.8));        // 3.0\n    printf("fabs(-7.5) = %.1f\\n", fabs(-7.5));        // 7.5\n    printf("log(2.718) = %.3f\\n", log(2.718));        // ~1.0 (natural log)\n    printf("log10(100) = %.1f\\n", log10(100.0));      // 2.0\n    printf("sin(0)     = %.1f\\n", sin(0.0));           // 0.0\n    printf("cos(0)     = %.1f\\n", cos(0.0));           // 1.0\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+| Function | Purpose | Header |
+|----------|---------|--------|
+| `sqrt(x)` | Square root | `<math.h>` |
+| `pow(x, y)` | x raised to power y | `<math.h>` |
+| `ceil(x)` / `floor(x)` | Round up / down | `<math.h>` |
+| `fabs(x)` | Absolute value (float) | `<math.h>` |
+| `abs(x)` | Absolute value (int) | `<stdlib.h>` |
+| `log(x)` / `log10(x)` | Natural / base-10 log | `<math.h>` |
+| `sin` / `cos` / `tan` | Trigonometry (radians) | `<math.h>` |
+
+<Callout type="info">
+All `math.h` functions work with `double`. Pass doubles and store the result in a `double`. On some systems you need to link the math library explicitly when compiling: `gcc program.c -lm`.
+</Callout>
+
+## Compound Assignment
+
+Instead of writing `x = x + 5`, C has shorthand:
+
+```c
+x += 5;    // same as x = x + 5
+x -= 3;    // same as x = x - 3
+x *= 2;    // same as x = x * 2
+x /= 4;    // same as x = x / 4
+x %= 3;    // same as x = x % 3
+```
+
+## Operator Precedence
+
+C follows standard math precedence, but there are gotchas:
+
+| Priority | Operators | Direction |
+|----------|-----------|-----------|
+| Highest | `()` | — |
+| | `++` `--` (prefix), `(type)` | Right to left |
+| | `*` `/` `%` | Left to right |
+| | `+` `-` | Left to right |
+| Lowest | `=` `+=` `-=` etc. | Right to left |
+
+<Callout type="tip">
+When in doubt, use parentheses. `(a + b) * c` is clearer than relying on knowing that `*` binds tighter than `+`. Readable code beats clever code.
+</Callout>
+
+## Exercise: Even or Odd
+
+<Exercise
+  title="Even or odd"
+  description="Read an integer from stdin. Print 'even' if it's even, 'odd' if it's odd."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Print "even" or "odd"\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "4", expected_stdout: "even\n" },
+    { stdin: "7", expected_stdout: "odd\n" },
+    { stdin: "0", expected_stdout: "even\n" },
+    { stdin: "-3", expected_stdout: "odd\n" }
+  ]}
+  hints={[
+    "Use the modulo operator: n % 2.",
+    "If n % 2 == 0, it's even. Otherwise it's odd.",
+    "Negative numbers: -3 % 2 is -1 in C, which is not 0, so it's still detected as odd."
+  ]}
+/>
+
+## Exercise: Extract Digits
+
+<Exercise
+  title="Extract digits of a 3-digit number"
+  description="Read a 3-digit integer (100-999) from stdin. Print its hundreds, tens, and ones digits on separate lines."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Extract and print each digit\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "456", expected_stdout: "4\n5\n6\n" },
+    { stdin: "100", expected_stdout: "1\n0\n0\n" },
+    { stdin: "999", expected_stdout: "9\n9\n9\n" }
+  ]}
+  hints={[
+    "Hundreds digit: n / 100",
+    "Tens digit: (n / 10) % 10",
+    "Ones digit: n % 10"
+  ]}
+/>
+
+## Exercise: Average of Three
+
+<Exercise
+  title="Average of three numbers"
+  description="Read three integers from stdin (each on a separate line). Print their average as a float with exactly 2 decimal places."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int a, b, c;\n    scanf("%d", &a);\n    scanf("%d", &b);\n    scanf("%d", &c);\n    \n    // Calculate and print the average with 2 decimal places\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "10\n20\n30", expected_stdout: "20.00\n" },
+    { stdin: "1\n2\n3", expected_stdout: "2.00\n" },
+    { stdin: "7\n7\n7", expected_stdout: "7.00\n" }
+  ]}
+  hints={[
+    "You need to avoid integer division. Cast the sum to float or double before dividing.",
+    "printf(\"%.2f\\n\", (double)(a + b + c) / 3);"
+  ]}
+/>
+
+## Exercise: Time Breakdown
+
+<Exercise
+  title="Seconds to hours, minutes, seconds"
+  description="Read a total number of seconds from stdin. Print it broken down as 'H:M:S' (e.g., 3661 → '1:1:1')."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int total;\n    scanf("%d", &total);\n    \n    // Break down into hours, minutes, seconds\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3661", expected_stdout: "1:1:1\n" },
+    { stdin: "7200", expected_stdout: "2:0:0\n" },
+    { stdin: "90", expected_stdout: "0:1:30\n" },
+    { stdin: "0", expected_stdout: "0:0:0\n" }
+  ]}
+  hints={[
+    "Hours = total / 3600",
+    "Minutes = (total % 3600) / 60",
+    "Seconds = total % 60"
+  ]}
+/>
+
+## What's Next
+
+Now you can do math in C and understand its quirks. Next we'll learn how to **read input from the user** with `scanf` — including its common pitfalls.

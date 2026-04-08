@@ -1,0 +1,374 @@
+---
+title: "Bit Manipulation Tricks"
+module: "Bitwise & Low-Level"
+order: 3
+description: "Flags, bitmasks, bit fields, and classic bit manipulation patterns."
+difficulty: "intermediate"
+---
+
+The previous lesson taught you what each bitwise operator does. This lesson is about the *patterns* — the recurring tricks that appear throughout systems programming. For each trick, we won't just show you the formula. We'll explain **why it works**, so you can derive it yourself when you forget it.
+
+## Bit Flags: Cramming Booleans Into One Integer
+
+Imagine you need to track 8 yes/no properties. You could use 8 separate `bool` variables (8 bytes on most systems), or you could use a single `unsigned char` (1 byte) and let each bit represent one property. This isn't just a space optimization — it lets you set, clear, and test multiple flags in a single operation.
+
+This technique predates C itself. Unix file permissions (`rwxr-xr-x`) are bit flags. TCP header flags (SYN, ACK, FIN) are bit flags. GPU feature bits, CPU status registers, compiler options — all bit flags.
+
+The pattern uses three operators:
+- **Set a flag**: `flags |= FLAG` — OR turns the bit on without disturbing others
+- **Clear a flag**: `flags &= ~FLAG` — AND with the inverted flag zeros just that bit
+- **Test a flag**: `flags & FLAG` — AND isolates just that bit; nonzero means "set"
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Permission flags (like Unix file permissions)
+#define PERM_READ    (1 << 0)  // 001
+#define PERM_WRITE   (1 << 1)  // 010
+#define PERM_EXECUTE (1 << 2)  // 100
+
+void print_permissions(unsigned int perms) {
+    printf("[%c%c%c]",
+        (perms & PERM_READ)    ? 'r' : '-',
+        (perms & PERM_WRITE)   ? 'w' : '-',
+        (perms & PERM_EXECUTE) ? 'x' : '-');
+}
+
+int main() {
+    unsigned int file_perms = 0;
+
+    // Grant read and write
+    file_perms |= PERM_READ | PERM_WRITE;
+    printf("After granting rw: ");
+    print_permissions(file_perms);
+    printf("\\n");
+
+    // Add execute
+    file_perms |= PERM_EXECUTE;
+    printf("After adding x:    ");
+    print_permissions(file_perms);
+    printf("\\n");
+
+    // Remove write
+    file_perms &= ~PERM_WRITE;
+    printf("After removing w:  ");
+    print_permissions(file_perms);
+    printf("\\n");
+
+    // Check permissions
+    printf("\\nCan read?    %s\\n", (file_perms & PERM_READ)    ? "yes" : "no");
+    printf("Can write?   %s\\n", (file_perms & PERM_WRITE)   ? "yes" : "no");
+    printf("Can execute? %s\\n", (file_perms & PERM_EXECUTE) ? "yes" : "no");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Isolate the Lowest Set Bit: `n & (-n)`
+
+This trick extracts the lowest (rightmost) bit that's set to 1, returning a power of 2.
+
+```c
+lowest_bit = n & (-n);  // or equivalently: n & (~n + 1)
+```
+
+**Why it works**: In two's complement, `-n` is `~n + 1`. When you flip all bits of `n`, every bit below and including the lowest set bit follows a specific pattern. Let's trace through `n = 12` (binary `1100`):
+
+```
+n  = 0000 1100       The lowest set bit is at position 2
+~n = 1111 0011       Flipping: bits below the lowest set bit flip from 0 to 1
+-n = 1111 0100       Adding 1 carries through those flipped bits,
+                     restoring the lowest set bit to 1
+                     but keeping everything above it flipped
+
+n & (-n):
+     0000 1100
+   & 1111 0100
+   ──────────
+     0000 0100       Only the lowest set bit survives!
+```
+
+The key insight: the bits *below* the lowest set bit are 0 in `n` and 1 in `~n`. Adding 1 to `~n` carries through all those 1s, flipping them back to 0 and setting the lowest-set-bit position to 1 — but everything *above* that position remains flipped from the NOT. So when you AND `n` with `-n`, everything above cancels (one flipped, one not), everything below is 0 in both, and only the lowest set bit position is 1 in both.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) printf("%d", (n >> i) & 1);
+}
+
+int main() {
+    unsigned char values[] = {12, 10, 7, 8, 6};
+
+    for (int i = 0; i < 5; i++) {
+        unsigned char n = values[i];
+        unsigned char lowest = n & (-n);
+        printf("n = %3d (", n);
+        print_binary8(n);
+        printf(")  lowest set bit = %d (", lowest);
+        print_binary8(lowest);
+        printf(")\\n");
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Clear the Lowest Set Bit: `n & (n - 1)`
+
+This is perhaps the most important single bit trick in computer science. It turns off the rightmost 1-bit, leaving everything else unchanged.
+
+```c
+cleared = n & (n - 1);
+```
+
+**Why it works**: Think about what happens when you subtract 1 from a binary number. The subtraction "borrows" from the lowest set bit, flipping it to 0 and setting all the lower bits to 1. All bits above the lowest set bit stay the same.
+
+```
+n     = 1010 1000     Lowest set bit is at position 3
+n - 1 = 1010 0111     Subtracting 1 flips bit 3 to 0,
+                      and sets bits 2, 1, 0 to 1
+
+n & (n-1):
+        1010 1000
+      & 1010 0111
+      ──────────
+        1010 0000     Lowest set bit is gone!
+```
+
+Why does the AND work? Above the lowest set bit, both `n` and `n-1` are identical (borrowing didn't reach up there). At the lowest set bit, `n` has 1 and `n-1` has 0 — AND gives 0. Below the lowest set bit, `n` has all 0s and `n-1` has all 1s — AND gives 0. So only the bits above the lowest set bit survive.
+
+This trick is the basis of:
+- **Power-of-two check**: A power of 2 has exactly one set bit (e.g., `1000`). If `n & (n-1)` is 0, there was only one bit to clear — so `n` is a power of 2. Just also check `n != 0` since 0 has no set bits but isn't a power of 2.
+- **Bit-counting trick**: Loop `n = n & (n-1)` until `n` is 0, counting iterations. Each iteration removes exactly one set bit, so you get the population count in O(k) iterations where k is the number of set bits (often much less than O(32)).
+
+```c
+is_power_of_two = (n != 0) && ((n & (n - 1)) == 0);
+```
+
+## Round Up to the Next Power of Two
+
+Sometimes you need to "snap" a number up to the nearest power of 2 (common in allocators to align buffer sizes). The trick fills in all bits below the highest set bit, then adds 1:
+
+<Editor defaultCode={`#include <stdio.h>
+
+unsigned int next_power_of_two(unsigned int n) {
+    if (n == 0) return 1;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1;
+}
+
+int main() {
+    unsigned int values[] = {0, 1, 3, 5, 7, 9, 15, 16, 17, 100};
+
+    for (int i = 0; i < 10; i++) {
+        printf("next_power_of_two(%3u) = %u\\n",
+               values[i], next_power_of_two(values[i]));
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+**Why it works**: The `n--` step handles the edge case where `n` is already a power of 2 (we don't want to round *up* to the next one). Then each `n |= n >> k` step "smears" the highest set bit downward. After `>> 1`, the top two bits are set. After `>> 2`, the top four. After all five steps, every bit below the highest set bit is 1. Adding 1 then carries through all those bits, producing the next power of 2. For a 32-bit integer, we need shifts of 1, 2, 4, 8, and 16 to cover all 32 positions.
+
+## Bitmask for Subsets
+
+One of the most elegant applications of bit manipulation: generating all subsets of a set. If you have `n` items, you can represent any subset as an `n`-bit number where bit `i` means "item `i` is included." There are `2^n` possible `n`-bit numbers, and each one corresponds to exactly one subset. So simply counting from 0 to `2^n - 1` enumerates every subset:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    char *items[] = {"apple", "banana", "cherry"};
+    int n = 3;
+    int total = 1 << n;  // 2^n subsets
+
+    printf("All subsets of {apple, banana, cherry}:\\n");
+    for (int mask = 0; mask < total; mask++) {
+        printf("{ ");
+        for (int i = 0; i < n; i++) {
+            if (mask & (1 << i)) {
+                printf("%s ", items[i]);
+            }
+        }
+        printf("}\\n");
+    }
+
+    return 0;
+}
+`} time="O(2^n * n)" space="O(1)" />
+
+<Callout type="info">
+This technique is commonly used in competitive programming and combinatorial search. For `n` items, there are `2^n` subsets, each represented by an `n`-bit integer where bit `i` indicates whether item `i` is included.
+</Callout>
+
+## Packed Data: Multiple Values in One Integer
+
+Bit manipulation lets you store multiple small values in a single integer by assigning each value a specific range of bits. Packing uses left shifts and OR to assemble; unpacking uses right shifts and AND-masks to extract.
+
+The most common example is RGB color values. Each color channel is 0–255 (8 bits), and three of them fit neatly into a 24-bit region of a 32-bit integer:
+
+```
+Bit layout:   [unused 8][red 8][green 8][blue 8]
+Positions:    31......24 23..16  15...8   7...0
+```
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Pack an RGB color into a single 32-bit integer
+unsigned int pack_rgb(unsigned char r, unsigned char g, unsigned char b) {
+    return ((unsigned int)r << 16) | ((unsigned int)g << 8) | b;
+}
+
+void unpack_rgb(unsigned int color, unsigned char *r, unsigned char *g, unsigned char *b) {
+    *r = (color >> 16) & 0xFF;
+    *g = (color >> 8)  & 0xFF;
+    *b = color & 0xFF;
+}
+
+int main() {
+    unsigned int color = pack_rgb(255, 128, 0);
+    printf("Packed:   0x%06X\\n", color);
+
+    unsigned char r, g, b;
+    unpack_rgb(color, &r, &g, &b);
+    printf("Unpacked: R=%d, G=%d, B=%d\\n", r, g, b);
+
+    // Modify just the green channel
+    color = (color & 0xFF00FF) | (200 << 8);
+    unpack_rgb(color, &r, &g, &b);
+    printf("Modified: R=%d, G=%d, B=%d\\n", r, g, b);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Exercise: Flag Operations
+
+<Exercise
+  title="Permission manager"
+  description="Read N operations. Each is '+R', '+W', '+X' (grant), '-R', '-W', '-X' (revoke), or '?' (query). For each '?', print the current permissions as 'rwx' with '-' for unset (e.g., 'r-x'). Start with no permissions."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define READ    1
+#define WRITE   2
+#define EXECUTE 4
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    unsigned int perms = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[4];
+        scanf("%s", op);
+
+        if (op[0] == '+') {
+            if (op[1] == 'R') perms |= READ;
+            else if (op[1] == 'W') perms |= WRITE;
+            else if (op[1] == 'X') perms |= EXECUTE;
+        } else if (op[0] == '-') {
+            if (op[1] == 'R') perms &= ~READ;
+            else if (op[1] == 'W') perms &= ~WRITE;
+            else if (op[1] == 'X') perms &= ~EXECUTE;
+        } else if (op[0] == '?') {
+            printf("%c%c%c\\n",
+                (perms & READ)    ? 'r' : '-',
+                (perms & WRITE)   ? 'w' : '-',
+                (perms & EXECUTE) ? 'x' : '-');
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n+R +W ? -W ?", expected_stdout: "rw-\nr--\n" },
+    { stdin: "4\n+R +W +X ?", expected_stdout: "rwx\n" },
+    { stdin: "3\n? +X ?", expected_stdout: "---\n--x\n" }
+  ]}
+  hints={[
+    "Use |= to set a bit (grant permission).",
+    "Use &= ~ to clear a bit (revoke permission).",
+    "Use & to test if a bit is set (check permission)."
+  ]}
+/>
+
+## Exercise: Find the Unique Number
+
+<Exercise
+  title="XOR to find unique"
+  description="In an array of N integers, every number appears exactly twice except one. Find the unique number using XOR."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int result = 0;
+    for (int i = 0; i < n; i++) {
+        int x;
+        scanf("%d", &x);
+        result ^= x;
+    }
+
+    printf("%d\\n", result);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n2 3 2 1 3", expected_stdout: "1\n" },
+    { stdin: "7\n4 1 2 1 2 4 7", expected_stdout: "7\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "3\n5 5 10", expected_stdout: "10\n" }
+  ]}
+  hints={[
+    "XOR of a number with itself is 0: a ^ a = 0.",
+    "XOR of a number with 0 is itself: a ^ 0 = a.",
+    "XOR all elements together. Pairs cancel out, leaving the unique number."
+  ]}
+/>
+
+## Exercise: Pack and Unpack
+
+<Exercise
+  title="RGB packing"
+  description="Read three integers R, G, B (0-255). Pack them into a single integer (R in bits 16-23, G in bits 8-15, B in bits 0-7). Print the packed value, then unpack and print R G B separated by spaces."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    unsigned int r, g, b;
+    scanf("%u %u %u", &r, &g, &b);
+
+    unsigned int packed = (r << 16) | (g << 8) | b;
+    printf("%u\\n", packed);
+
+    unsigned int ur = (packed >> 16) & 0xFF;
+    unsigned int ug = (packed >> 8) & 0xFF;
+    unsigned int ub = packed & 0xFF;
+    printf("%u %u %u\\n", ur, ug, ub);
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "255 128 0", expected_stdout: "16744448\n255 128 0\n" },
+    { stdin: "0 0 0", expected_stdout: "0\n0 0 0\n" },
+    { stdin: "255 255 255", expected_stdout: "16777215\n255 255 255\n" },
+    { stdin: "1 2 3", expected_stdout: "66051\n1 2 3\n" }
+  ]}
+  hints={[
+    "Pack: shift R left 16, G left 8, OR them with B.",
+    "Unpack: shift right and mask with 0xFF to extract each channel.",
+    "255 << 16 = 16711680, 128 << 8 = 32768, 0 = 0. Total = 16744448."
+  ]}
+/>
+
+## What's Next
+
+Our final lesson in this module: **memory layout** — understanding how the stack, heap, and data segments work at a low level.

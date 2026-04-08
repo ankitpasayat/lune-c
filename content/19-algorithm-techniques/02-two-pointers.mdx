@@ -1,0 +1,283 @@
+---
+title: "Two Pointers"
+module: "Algorithm Techniques"
+order: 2
+description: "Use two pointers to solve array and string problems efficiently in O(n) time."
+difficulty: "intermediate"
+---
+
+Consider this problem: given a **sorted** array and a target sum, find two numbers
+that add up to the target.
+
+The brute force is to check all pairs — two nested loops, O(n²). But the array is
+sorted. That structure is a gift, and we're wasting it.
+
+## The Insight
+
+Put one finger on the smallest element (left end) and one on the largest (right end).
+Add them. If the sum is too small, move the left finger right to increase it. If
+the sum is too large, move the right finger left to decrease it. Each step eliminates
+an entire row of possibilities.
+
+This is the **two pointers** technique — two indices that cooperate to scan an array
+faster than nested loops could.
+
+## Opposite Ends: Two Sum (Sorted)
+
+<Editor defaultCode={`#include <stdio.h>
+
+void two_sum_sorted(int arr[], int n, int target) {
+    int left = 0, right = n - 1;
+
+    while (left < right) {
+        int sum = arr[left] + arr[right];
+
+        if (sum == target) {
+            printf("Found: arr[%d]=%d + arr[%d]=%d = %d\\n",
+                   left, arr[left], right, arr[right], target);
+            return;
+        } else if (sum < target) {
+            left++;   // sum too small — need a bigger left value
+        } else {
+            right--;  // sum too big — need a smaller right value
+        }
+    }
+    printf("No pair found for target %d\\n", target);
+}
+
+int main() {
+    int arr[] = {1, 3, 5, 7, 9, 11, 15};
+    int n = 7;
+
+    two_sum_sorted(arr, n, 12);  // 3 + 9
+    two_sum_sorted(arr, n, 16);  // 1 + 15
+    two_sum_sorted(arr, n, 100); // not found
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+### Why Does This Work?
+
+Think about it carefully. When `arr[left] + arr[right] < target`, could the answer
+involve `arr[left]` paired with something *smaller* than `arr[right]`? No — because
+we already tried the largest possible partner for `arr[left]` and it wasn't enough.
+So `arr[left]` can't be part of any solution. We can safely eliminate it.
+
+The same logic applies when the sum is too large: `arr[right]` can't be part of any
+solution, so we eliminate it. Each step prunes a candidate. With at most `n` steps,
+we've either found the answer or proven none exists.
+
+<Callout type="info">
+If the array isn't sorted, sort it first for O(n log n) + O(n) = O(n log n) total.
+Still better than O(n²). Alternatively, use a hash table for O(n) — but that's a
+different technique entirely.
+</Callout>
+
+## Opposite Ends: Palindrome Check
+
+Two pointers are the natural tool for any problem that compares elements from both
+ends of a sequence:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int is_palindrome(char *s) {
+    int left = 0;
+    int right = strlen(s) - 1;
+
+    while (left < right) {
+        if (s[left] != s[right]) {
+            return 0;  // Mismatch found — not a palindrome
+        }
+        left++;
+        right--;
+    }
+    return 1;  // All characters matched
+}
+
+int main() {
+    char *tests[] = {"racecar", "hello", "madam", "ab", "a"};
+    int n = 5;
+
+    for (int i = 0; i < n; i++) {
+        printf("\\"%s\\" is %sa palindrome\\n",
+               tests[i],
+               is_palindrome(tests[i]) ? "" : "not ");
+    }
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+No new arrays, no string reversal, no extra memory. Just two indices walking inward.
+
+## Same Direction: The Fast/Slow Pattern
+
+The other major variant: both pointers start at the beginning and move right, but at
+different speeds. The slow pointer marks a "boundary" — everything before it satisfies
+some condition. The fast pointer scans ahead looking for elements to place.
+
+### Remove Duplicates from Sorted Array
+
+<Editor defaultCode={`#include <stdio.h>
+
+int remove_duplicates(int arr[], int n) {
+    if (n == 0) return 0;
+
+    int slow = 0;  // Everything up to slow is unique
+
+    for (int fast = 1; fast < n; fast++) {
+        if (arr[fast] != arr[slow]) {
+            // New unique element found — place it after slow
+            slow++;
+            arr[slow] = arr[fast];
+        }
+        // If arr[fast] == arr[slow], fast moves but slow stays put
+    }
+    return slow + 1;  // New length
+}
+
+int main() {
+    int arr[] = {1, 1, 2, 2, 2, 3, 4, 4, 5};
+    int n = 9;
+
+    printf("Before: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    int new_len = remove_duplicates(arr, n);
+
+    printf("After:  ");
+    for (int i = 0; i < new_len; i++) printf("%d ", arr[i]);
+    printf("  (length: %d)\\n", new_len);
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The mental model: `slow` is the gatekeeper. `fast` explores ahead. When `fast` finds
+something new, it presents it to `slow`, who accepts it and advances. When `fast` finds
+a duplicate, `slow` ignores it and `fast` keeps going.
+
+## Same Direction: Reverse Array In-Place
+
+This is technically "opposite ends" in disguise — but it shows how the pattern
+adapts:
+
+<Editor defaultCode={`#include <stdio.h>
+
+void reverse(int arr[], int n) {
+    int left = 0, right = n - 1;
+    while (left < right) {
+        int tmp = arr[left];
+        arr[left] = arr[right];
+        arr[right] = tmp;
+        left++;
+        right--;
+    }
+}
+
+int main() {
+    int arr[] = {1, 2, 3, 4, 5, 6, 7};
+    int n = 7;
+
+    printf("Before: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+
+    reverse(arr, n);
+
+    printf("\\nAfter:  ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## When to Reach for Two Pointers
+
+Ask these questions:
+1. Is the input **sorted** or can you sort it? → Opposite-ends pattern likely works
+2. Need to modify an array **in-place** with O(1) space? → Fast/slow pattern
+3. Are you comparing elements from **both ends** (palindromes, matching brackets)? → Opposite ends
+4. Are you **partitioning** an array (zeros to one side, negatives to the left)? → Fast/slow
+
+## Exercise: Move Zeros
+
+<Exercise
+  title="Move zeros to end"
+  description="Given an array of integers, move all zeros to the end while maintaining the relative order of non-zero elements. Do it in-place. Read n, then n integers. Print the resulting array space-separated."
+  starterCode={`#include <stdio.h>
+
+void move_zeros(int arr[], int n) {
+    // Use a slow pointer to track where the next non-zero should go
+    // Fast pointer scans through the array
+
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    move_zeros(arr, n);
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n0 1 0 3 12", expected_stdout: "1 3 12 0 0\n" },
+    { stdin: "4\n0 0 0 1", expected_stdout: "0 0 0 1\n" },
+    { stdin: "3\n1 2 3", expected_stdout: "1 2 3\n" }
+  ]}
+  hints={[
+    "Use a 'slow' pointer starting at 0. It marks where the next non-zero element should be placed.",
+    "Scan with a 'fast' pointer. When you find a non-zero, swap it with arr[slow] and increment slow.",
+    "After the loop, all non-zeros are at the front and zeros fill the rest."
+  ]}
+/>
+
+## Exercise: Container With Most Water
+
+<Exercise
+  title="Max area between lines"
+  description="Given n vertical lines where line i has height h[i], find two lines that together with the x-axis form a container that holds the most water. The area between lines at positions i and j is min(h[i], h[j]) * (j - i). Read n, then n heights. Print the maximum area."
+  starterCode={`#include <stdio.h>
+
+int max_area(int height[], int n) {
+    // Start with the widest container (left=0, right=n-1)
+    // The only way to get more area is to find taller lines
+    // Move the pointer pointing to the shorter line inward
+    int best = 0;
+
+    return best;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int h[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &h[i]);
+
+    printf("%d\\n", max_area(h, n));
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "9\n1 8 6 2 5 4 8 3 7", expected_stdout: "49\n" },
+    { stdin: "2\n1 1", expected_stdout: "1\n" },
+    { stdin: "4\n4 3 2 1", expected_stdout: "4\n" }
+  ]}
+  hints={[
+    "Start with left=0, right=n-1. Compute area = min(h[left],h[right]) * (right-left).",
+    "Why move the shorter side? Because moving the taller side can only decrease the area (width decreases, and the height is still limited by the shorter side).",
+    "If h[left] < h[right], move left++. Otherwise right--. Track max area."
+  ]}
+/>

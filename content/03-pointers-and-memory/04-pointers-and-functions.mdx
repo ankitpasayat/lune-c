@@ -1,0 +1,304 @@
+---
+title: "Pointers and Functions"
+module: "Pointers and Memory"
+order: 4
+description: "Pass by reference, returning pointers, double pointers, and function pointers."
+difficulty: "intermediate"
+---
+
+Pointers and functions together solve a fundamental problem: how does a function
+communicate results back to its caller beyond a single return value?
+
+In many languages, you pass objects by reference without thinking about it. In C, you
+must do it explicitly — and understanding *why* teaches you how function calls actually
+work at the hardware level.
+
+## Pass by Reference (Simulated)
+
+C is always pass-by-value: when you call `f(x)`, the function gets a *copy* of `x`.
+Modifying the copy doesn't affect the original. But if you pass a *pointer* to `x`,
+the function can reach into the caller's memory and modify `x` directly:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Pass by value: modifying n has no effect on the caller
+void increment_value(int n) {
+    n++;  // Only changes the local copy
+}
+
+// Pass by reference: modifying *p changes the caller's variable
+void increment_ref(int *p) {
+    (*p)++;  // Dereference the pointer, modify the original
+}
+
+int main() {
+    int x = 10;
+
+    increment_value(x);
+    printf("After increment_value: %d\\n", x);  // Still 10
+
+    increment_ref(&x);
+    printf("After increment_ref:   %d\\n", x);  // 11
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Think of it this way: `increment_value(x)` is like telling someone "the number is 10"
+— they can change *their* number, but yours stays the same. `increment_ref(&x)` is
+like telling them "the number is *in this drawer*" — now they can open the drawer and
+change what's inside.
+
+This is why `scanf` needs `&`: `scanf("%d", &x)` gives `scanf` the *address* of `x`
+so it can store the parsed number there.
+
+## Multiple Return Values
+
+C functions return exactly one value. But many operations naturally produce two or
+more results. Pointers solve this — pass addresses of where you want the results
+stored:
+
+<Editor defaultCode={`#include <stdio.h>
+
+void min_max(int *arr, int n, int *out_min, int *out_max) {
+    *out_min = arr[0];
+    *out_max = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] < *out_min) *out_min = arr[i];
+        if (arr[i] > *out_max) *out_max = arr[i];
+    }
+}
+
+int main() {
+    int data[] = {3, 7, 1, 9, 4, 6, 2};
+    int min, max;
+
+    min_max(data, 7, &min, &max);
+
+    printf("Min: %d, Max: %d\\n", min, max);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The naming convention `out_min`, `out_max` signals "this is an output parameter."
+Some codebases prefix with `out_` to make the intent clear.
+
+## Returning Pointers
+
+Functions can allocate memory and return a pointer to it. The caller then "owns"
+that memory and must free it:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int *create_range(int start, int end) {
+    int n = end - start;
+    int *arr = malloc(n * sizeof(int));
+    if (arr == NULL) return NULL;
+
+    for (int i = 0; i < n; i++) {
+        arr[i] = start + i;
+    }
+    return arr;  // Caller must free this!
+}
+
+int main() {
+    int *range = create_range(5, 10);
+    if (range == NULL) return 1;
+
+    for (int i = 0; i < 5; i++) {
+        printf("%d ", range[i]);
+    }
+    printf("\\n");
+
+    free(range);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+<Callout type="warning">
+Never return a pointer to a local variable. Local variables live on the stack and
+are destroyed when the function returns. The pointer will point to deallocated memory:
+```c
+int *bad() {
+    int x = 42;
+    return &x;  // WRONG: x is destroyed after return
+}
+```
+Only return pointers to heap-allocated memory (`malloc`/`calloc`) or `static`/global
+variables.
+</Callout>
+
+## Double Pointers: When You Need to Modify a Pointer
+
+Here's a common situation: you want a function to allocate memory and store the
+result in a pointer that the caller provides. The caller has `int *arr = NULL` and
+wants the function to make `arr` point to new memory.
+
+But if you pass `arr` to a function, the function gets a *copy* of the pointer.
+Modifying the copy doesn't change `arr` in the caller. You need a pointer *to the
+pointer* — a double pointer:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+// Needs to modify the caller's pointer, so takes int **
+void allocate(int **ptr, int n) {
+    *ptr = malloc(n * sizeof(int));
+    if (*ptr == NULL) return;
+    for (int i = 0; i < n; i++) {
+        (*ptr)[i] = i * 10;
+    }
+}
+
+int main() {
+    int *arr = NULL;
+
+    allocate(&arr, 5);  // Pass address of the pointer itself
+
+    if (arr != NULL) {
+        for (int i = 0; i < 5; i++) {
+            printf("%d ", arr[i]);
+        }
+        printf("\\n");
+        free(arr);
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+The logic is the same as pass-by-reference for `int`: to modify an `int`, pass an
+`int *`. To modify an `int *`, pass an `int **`. The pattern extends to any depth,
+though you rarely need more than two levels.
+
+Double pointers also appear naturally with:
+- **Arrays of strings**: `char **words` is an array where each element is a `char *`
+- **`main`'s `argv`**: `char *argv[]` is equivalent to `char **argv`
+- **Linked list operations**: inserting at the head needs to modify the head pointer
+
+## Arrays of Pointers
+
+An array of strings is really an array of `char *` pointers — each element points to
+a string stored somewhere in memory:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    char *fruits[] = {"apple", "banana", "cherry", "date"};
+    int n = 4;
+
+    for (int i = 0; i < n; i++) {
+        printf("fruits[%d] = %s\\n", i, fruits[i]);
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+This is exactly how `argv` works in `main(int argc, char *argv[])`: `argv` is an
+array of pointers, each pointing to one command-line argument string.
+
+## Exercise: Multiply by Reference
+
+<Exercise
+  title="Scale array elements"
+  description="Read N integers and a scale factor. Write a function void scale(int *arr, int n, int factor) that multiplies each element by factor. Print the modified array."
+  starterCode={`#include <stdio.h>
+
+void scale(int *arr, int n, int factor) {
+    // Multiply each element by factor
+}
+
+int main() {
+    int n, factor;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+    scanf("%d", &factor);
+
+    scale(arr, n, factor);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d", arr[i]);
+        if (i < n - 1) printf(" ");
+    }
+    printf("\\n");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n1 2 3 4\n3", expected_stdout: "3 6 9 12\n" },
+    { stdin: "3\n10 20 30\n0", expected_stdout: "0 0 0\n" },
+    { stdin: "2\n-5 5\n2", expected_stdout: "-10 10\n" }
+  ]}
+  hints={[
+    "Loop through and multiply: for (int i = 0; i < n; i++) arr[i] *= factor;",
+    "Since arr is a pointer, modifications affect the original array in main."
+  ]}
+/>
+
+## Exercise: Split Even and Odd
+
+<Exercise
+  title="Partition into evens and odds"
+  description="Read N integers. Print all even numbers on the first line, all odd numbers on the second, each space-separated."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    // Print even numbers on line 1
+    // Print odd numbers on line 2
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n1 2 3 4 5 6", expected_stdout: "2 4 6\n1 3 5\n" },
+    { stdin: "4\n2 4 6 8", expected_stdout: "2 4 6 8\n\n" },
+    { stdin: "3\n1 3 5", expected_stdout: "\n1 3 5\n" }
+  ]}
+  hints={[
+    "Loop through twice: first printing even numbers, then printing odd numbers.",
+    "Use a flag to track if you've printed anything (for spacing). Or use a counter."
+  ]}
+/>
+
+## Exercise: Dynamic String Concatenation
+
+<Exercise
+  title="Join words"
+  description="Read N words. Join them into a single space-separated string and print it. (For simplicity: read N, then N words, and print them space-separated.)"
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char word[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%99s", word);
+        if (i > 0) printf(" ");
+        printf("%s", word);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nhello world foo", expected_stdout: "hello world foo\n" },
+    { stdin: "1\nonly", expected_stdout: "only\n" },
+    { stdin: "4\na b c d", expected_stdout: "a b c d\n" }
+  ]}
+  hints={[
+    "This one's mostly done for you — just make sure the spacing logic is correct.",
+    "Print a space before each word except the first."
+  ]}
+/>

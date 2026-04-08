@@ -1,0 +1,361 @@
+---
+title: "A Memory Allocator"
+module: "Building Real Programs"
+order: 2
+description: "Build a simple malloc/free implementation using a free list allocator."
+difficulty: "advanced"
+---
+
+Every call to `malloc` and `free` touches a memory allocator. Let's build one.
+
+## How malloc Works (Conceptually)
+
+The allocator manages a region of memory (the heap) and tracks which parts are in use:
+
+```
+Heap Memory:
+[Header|Used Block][Header|Free Block][Header|Used Block][Header|Free...]
+```
+
+Key data structures:
+- **Block header**: metadata before each block (size, is_free flag)
+- **Free list**: linked list of available blocks
+
+## Block Header
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stddef.h>
+
+// Every block of memory has a header
+typedef struct Block {
+    size_t size;           // Size of usable data (not including header)
+    int free;              // 1 = available, 0 = in use
+    struct Block *next;    // Next block in list
+} Block;
+
+#define BLOCK_SIZE sizeof(Block)
+
+// The user gets a pointer AFTER the header:
+// [Block header | user data ...]
+//                ^ pointer returned to user
+
+int main() {
+    printf("Block header size: %zu bytes\\n", BLOCK_SIZE);
+    printf("\\nMemory layout:\\n");
+    printf("[Header %zu bytes][User Data N bytes]\\n", BLOCK_SIZE);
+    printf("                  ^ malloc returns this address\\n");
+
+    // Given a user pointer, we can find the header:
+    // Block *header = (Block*)ptr - 1;
+
+    return 0;
+}
+`} />
+
+## A Simple Free-List Allocator
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stddef.h>
+#include <string.h>
+
+// ---- Allocator Implementation ----
+
+typedef struct Block {
+    size_t size;
+    int free;
+    struct Block *next;
+} Block;
+
+#define BLOCK_SIZE sizeof(Block)
+
+// Use a static array as our "heap"
+#define HEAP_SIZE 4096
+static char heap[HEAP_SIZE];
+static Block *free_list = NULL;
+static int initialized = 0;
+
+void heap_init(void) {
+    free_list = (Block*)heap;
+    free_list->size = HEAP_SIZE - BLOCK_SIZE;
+    free_list->free = 1;
+    free_list->next = NULL;
+    initialized = 1;
+}
+
+void *my_malloc(size_t size) {
+    if (!initialized) heap_init();
+    if (size == 0) return NULL;
+
+    // Align to 8 bytes
+    size = (size + 7) & ~7;
+
+    Block *curr = free_list;
+    while (curr) {
+        if (curr->free && curr->size >= size) {
+            // Split if remaining space is large enough
+            if (curr->size >= size + BLOCK_SIZE + 8) {
+                Block *new_block = (Block*)((char*)curr + BLOCK_SIZE + size);
+                new_block->size = curr->size - size - BLOCK_SIZE;
+                new_block->free = 1;
+                new_block->next = curr->next;
+                curr->size = size;
+                curr->next = new_block;
+            }
+            curr->free = 0;
+            return (char*)curr + BLOCK_SIZE;
+        }
+        curr = curr->next;
+    }
+
+    return NULL;  // Out of memory
+}
+
+void my_free(void *ptr) {
+    if (!ptr) return;
+    Block *block = (Block*)((char*)ptr - BLOCK_SIZE);
+    block->free = 1;
+
+    // Coalesce adjacent free blocks
+    Block *curr = free_list;
+    while (curr) {
+        if (curr->free && curr->next && curr->next->free) {
+            curr->size += BLOCK_SIZE + curr->next->size;
+            curr->next = curr->next->next;
+            continue;  // Check again in case of chain
+        }
+        curr = curr->next;
+    }
+}
+
+// ---- Debugging ----
+
+void heap_dump(void) {
+    Block *curr = free_list;
+    int i = 0;
+    printf("Heap state:\\n");
+    while (curr) {
+        printf("  Block %d: %zu bytes, %s\\n",
+               i++, curr->size, curr->free ? "FREE" : "USED");
+        curr = curr->next;
+    }
+    printf("\\n");
+}
+
+// ---- Demo ----
+
+int main() {
+    printf("=== Custom Memory Allocator ===\\n\\n");
+
+    int *a = my_malloc(sizeof(int) * 10);
+    printf("Allocated 40 bytes for array\\n");
+    heap_dump();
+
+    char *s = my_malloc(100);
+    printf("Allocated 100 bytes for string\\n");
+    heap_dump();
+
+    my_free(a);
+    printf("Freed the array\\n");
+    heap_dump();
+
+    int *b = my_malloc(sizeof(int) * 5);
+    printf("Allocated 20 bytes (should reuse freed block)\\n");
+    heap_dump();
+
+    // Use the allocations
+    if (b) {
+        for (int i = 0; i < 5; i++) b[i] = i * 10;
+        printf("Values: ");
+        for (int i = 0; i < 5; i++) printf("%d ", b[i]);
+        printf("\\n\\n");
+    }
+
+    if (s) {
+        strcpy(s, "Hello from custom allocator!");
+        printf("String: %s\\n", s);
+    }
+
+    my_free(s);
+    my_free(b);
+    printf("\\nAll freed\\n");
+    heap_dump();
+
+    return 0;
+}
+`} />
+
+## Allocation Strategies
+
+Different strategies for choosing which free block to use:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stddef.h>
+
+typedef struct Block {
+    size_t size;
+    int free;
+    struct Block *next;
+} Block;
+
+// FIRST FIT: use the first block that's large enough
+// + Simple, fast
+// - Can leave many small fragments at the start
+Block *first_fit(Block *list, size_t size) {
+    Block *curr = list;
+    while (curr) {
+        if (curr->free && curr->size >= size) return curr;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+// BEST FIT: use the smallest block that's large enough
+// + Minimizes wasted space per allocation
+// - Slower (must scan entire list), creates tiny fragments
+Block *best_fit(Block *list, size_t size) {
+    Block *best = NULL;
+    Block *curr = list;
+    while (curr) {
+        if (curr->free && curr->size >= size) {
+            if (!best || curr->size < best->size) {
+                best = curr;
+            }
+        }
+        curr = curr->next;
+    }
+    return best;
+}
+
+// WORST FIT: use the largest block
+// + Avoids tiny fragments
+// - Wastes large blocks, slower
+Block *worst_fit(Block *list, size_t size) {
+    Block *worst = NULL;
+    Block *curr = list;
+    while (curr) {
+        if (curr->free && curr->size >= size) {
+            if (!worst || curr->size > worst->size) {
+                worst = curr;
+            }
+        }
+        curr = curr->next;
+    }
+    return worst;
+}
+
+int main() {
+    printf("Allocation strategies:\\n\\n");
+    printf("First Fit: O(n) average, fast for small heaps\\n");
+    printf("Best Fit:  O(n) always, minimizes waste per block\\n");
+    printf("Worst Fit: O(n) always, avoids tiny fragments\\n");
+    printf("\\nReal allocators use more advanced techniques:\\n");
+    printf("- Segregated free lists (size classes)\\n");
+    printf("- Buddy system (power-of-2 splitting)\\n");
+    printf("- Thread-local caches\\n");
+
+    return 0;
+}
+`} />
+
+## Coalescing Free Blocks
+
+When freeing a block, merge adjacent free blocks to prevent fragmentation:
+
+```
+Before free(B):
+[A: USED][B: USED][C: FREE]
+
+After free(B):
+[A: USED][B: FREE][C: FREE]
+
+After coalescing:
+[A: USED][B+C: FREE (merged)]
+```
+
+<Callout type="warning">
+Without coalescing, your allocator will gradually fragment — you'll have plenty of total free memory but no single block large enough for a large allocation. This is called **external fragmentation**.
+</Callout>
+
+## Exercise: Block Splitter
+
+<Exercise
+  title="Split free blocks"
+  description="You have a heap simulated as an array of block sizes. Read N (number of blocks) and their sizes, then read an allocation request size S. Find the first block >= S using first-fit. If the block is at least S+16 bytes, split it into two: one of size S and one with the remainder minus 16 (for the new header). Print the resulting block sizes, one per line."
+  starterCode={`#include <stdio.h>
+
+#define MAX_BLOCKS 100
+#define HEADER_SIZE 16
+
+int main() {
+    int n, s;
+    int blocks[MAX_BLOCKS];
+
+    scanf("%d", &n);
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &blocks[i]);
+    }
+    scanf("%d", &s);
+
+    // TODO: First-fit allocation with splitting
+    // Find first block >= s
+    // If block >= s + HEADER_SIZE, split it
+    // Print all block sizes
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n100 200 50\n80", expected_stdout: "80\n4\n200\n50\n" },
+    { stdin: "2\n64 128\n64", expected_stdout: "64\n128\n" },
+    { stdin: "3\n30 100 50\n40", expected_stdout: "30\n40\n44\n50\n" },
+    { stdin: "1\n256\n100", expected_stdout: "100\n140\n" }
+  ]}
+  hints={[
+    "Scan blocks left to right for first one >= s.",
+    "Split only if block_size >= s + HEADER_SIZE.",
+    "New block size = old_size - s - HEADER_SIZE.",
+    "If block_size < s + HEADER_SIZE, don't split — use the whole block."
+  ]}
+/>
+
+## Exercise: Coalesce Free Blocks
+
+<Exercise
+  title="Merge adjacent free blocks"
+  description="Read N blocks, each described by a size and status (0=free, 1=used). Coalesce (merge) adjacent free blocks. When merging two blocks, the new size is size1 + size2 + 16 (reclaiming the header). Print each resulting block as 'size status'."
+  starterCode={`#include <stdio.h>
+
+#define MAX_BLOCKS 100
+
+int main() {
+    int n;
+    int sizes[MAX_BLOCKS], status[MAX_BLOCKS];
+
+    scanf("%d", &n);
+    for (int i = 0; i < n; i++) {
+        scanf("%d %d", &sizes[i], &status[i]);
+    }
+
+    // TODO: Coalesce adjacent free (status=0) blocks
+    // When merging: new_size = size1 + size2 + 16
+    // Print remaining blocks as "size status"
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n100 1\n50 0\n60 0\n80 1", expected_stdout: "100 1\n126 0\n80 1\n" },
+    { stdin: "3\n50 0\n50 0\n50 0", expected_stdout: "182 0\n" },
+    { stdin: "3\n100 1\n200 1\n50 1", expected_stdout: "100 1\n200 1\n50 1\n" },
+    { stdin: "5\n32 0\n32 0\n64 1\n32 0\n32 0", expected_stdout: "80 0\n64 1\n80 0\n" }
+  ]}
+  hints={[
+    "Scan left to right. If current and next are both free, merge them.",
+    "After merging, check again — the merged block might merge with the next one too.",
+    "Use a result array or modify in place and track the count."
+  ]}
+/>
+
+## What's Next
+
+Next: building a **key-value store** with file persistence — a mini database.

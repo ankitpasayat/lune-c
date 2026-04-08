@@ -1,0 +1,453 @@
+---
+title: "C Standards and Undefined Behavior"
+module: "Performance & Advanced C"
+order: 4
+description: "Understand C89, C99, C11, and C17 features, and navigate the minefield of undefined behavior."
+difficulty: "advanced"
+---
+
+C is one of the few languages where writing code that "works on your machine" can be meaningless. A program that runs perfectly today with GCC on Linux might crash on Windows with MSVC, or silently produce wrong results on ARM. The reason comes down to two things this lesson covers: **undefined behavior** and **C standards**.
+
+Understanding both is not optional at the advanced level — it's the difference between code that's correct and code that coincidentally works.
+
+## Why Undefined Behavior Exists
+
+Undefined behavior (UB) is C's most misunderstood feature. Most programmers think of it as "bad things that happen when you make a mistake." That's the *effect*, not the *reason*.
+
+UB exists because C made a deliberate trade-off: **maximum performance across all hardware**. C runs on everything from 8-bit microcontrollers to 64-bit supercomputers. These machines differ wildly in how they handle things like integer overflow, null pointer access, or misaligned memory reads. Rather than mandate one behavior (which would be slow on some platforms), the C standard says: "this is undefined — the compiler can assume it never happens."
+
+Think of it as a **contract between you and the compiler**:
+
+- **Your promise**: "I will never cause signed integer overflow, dereference NULL, access out-of-bounds memory, or do any of the ~200 things the standard calls undefined."
+- **The compiler's promise**: "I will generate the fastest possible code, *assuming your promises are true*."
+
+This is the key insight: the compiler doesn't just "not handle" UB — it **actively exploits your promises for optimization**. If you promise signed overflow never happens, the compiler can assume `x + 1 > x` is always true and optimize accordingly. If you promise pointers are never NULL after a dereference, the compiler can remove your NULL checks.
+
+This means UB can cause **action at a distance** — undefined behavior in one place can change the behavior of unrelated correct code, because the compiler's optimizer reasons globally about what's possible.
+
+## The Evolution of C
+
+C has been standardized multiple times, and each standard added features while maintaining backward compatibility. Knowing which standard you're targeting matters for portability — code that compiles under C99 might not compile under strict C89.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdbool.h>   // C99: bool type
+#include <stdint.h>    // C99: fixed-width integers
+#include <complex.h>   // C99: complex numbers
+
+int main() {
+    printf("=== C Standard Timeline ===\\n\\n");
+
+    printf("Pre-standard C (1978):\n");
+    printf("  - The original. No prototypes. No void.\\n");
+    printf("  - int func() meant 'unknown parameters'\\n\\n");
+
+    printf("C89/C90 (ANSI C):\\n");
+    printf("  - Function prototypes: int func(int x)\\n");
+    printf("  - void type, const, volatile\\n");
+    printf("  - Standard library (<stdio.h>, etc.)\\n\\n");
+
+    printf("C99:\\n");
+    printf("  - // comments, mixed declarations\\n");
+    printf("  - Variable-length arrays (VLA)\\n");
+    printf("  - <stdbool.h>, <stdint.h>, <complex.h>\\n");
+    printf("  - inline functions, restrict pointer\\n");
+    printf("  - long long (64-bit integer)\\n");
+    printf("  - Designated initializers: {.x = 1}\\n\\n");
+
+    printf("C11:\\n");
+    printf("  - _Atomic types and <stdatomic.h>\\n");
+    printf("  - _Thread_local storage\\n");
+    printf("  - _Static_assert (compile-time checks)\\n");
+    printf("  - Anonymous structs and unions\\n");
+    printf("  - <threads.h> (optional)\\n\\n");
+
+    printf("C17 (C18):\\n");
+    printf("  - Bug fixes only, no new features\\n");
+    printf("  - Current default for most compilers\\n\\n");
+
+    printf("C23 (newest):\\n");
+    printf("  - typeof, constexpr, #embed\\n");
+    printf("  - Binary literals: 0b1010\\n");
+    printf("  - Attributes: [[nodiscard]]\\n");
+
+    // C99 features
+    bool flag = true;
+    int32_t x = 42;
+    printf("\\nC99 in action: bool=%d, int32_t=%d\\n", flag, x);
+
+    return 0;
+}
+`} />
+
+**Why standards matter for portability:** Without standards, every compiler invents its own dialect. Pre-standard C was so loosely defined that code written for one compiler often wouldn't work on another. ANSI C (C89) fixed this by creating a portable baseline. Each subsequent standard added features with precise semantics, so code written to C99 behaves identically on any conforming C99 compiler — GCC on Linux, Clang on macOS, MSVC on Windows.
+
+Specify your standard explicitly: `gcc -std=c11` or `gcc -std=c99`. If you don't, you get the compiler's default (usually C17 with GNU extensions), which may accept non-portable features silently.
+
+## C99 Features in Practice
+
+C99 was the biggest leap forward. Before C99, you couldn't declare variables inside a `for` loop, couldn't use `//` comments, and didn't have a boolean type. `restrict` enabled better optimization. Designated initializers made struct initialization readable. These features made C significantly more pleasant to write, and virtually all modern C code assumes C99 at minimum.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+// 1. Designated initializers
+typedef struct {
+    int x, y;
+    const char *name;
+} Point;
+
+// 2. Compound literals
+void print_point(Point p) {
+    printf("  %s: (%d, %d)\\n", p.name, p.x, p.y);
+}
+
+// 3. Variadic macros
+#define LOG(fmt, ...) printf("[LOG] " fmt "\\n", ##__VA_ARGS__)
+
+// 4. restrict pointer (promise of no aliasing)
+void vector_add(int * restrict c,
+                const int * restrict a,
+                const int * restrict b,
+                int n) {
+    for (int i = 0; i < n; i++) c[i] = a[i] + b[i];
+}
+
+int main() {
+    printf("=== C99 Features ===\\n\\n");
+
+    // Designated initializers
+    printf("Designated initializers:\\n");
+    Point p1 = { .name = "origin", .x = 0, .y = 0 };
+    Point p2 = { .name = "target", .x = 10, .y = 20 };
+    print_point(p1);
+    print_point(p2);
+
+    // Compound literals
+    printf("\\nCompound literals:\\n");
+    print_point((Point){ .name = "inline", .x = 5, .y = 5 });
+
+    // Mixed declarations (can declare variables anywhere)
+    printf("\\nMixed declarations:\\n");
+    for (int i = 0; i < 3; i++) {  // i declared in for
+        int squared = i * i;  // Variable after statement
+        printf("  %d^2 = %d\\n", i, squared);
+    }
+
+    // Variadic macros
+    printf("\\nVariadic macros:\\n");
+    LOG("Starting up");
+    LOG("Value: %d", 42);
+    LOG("Point: (%d, %d)", 10, 20);
+
+    // restrict
+    printf("\\nrestrict keyword:\\n");
+    int a[] = {1, 2, 3}, b[] = {4, 5, 6}, c[3];
+    vector_add(c, a, b, 3);
+    printf("  [%d, %d, %d]\\n", c[0], c[1], c[2]);
+
+    return 0;
+}
+`} />
+
+## C11 Features
+
+C11 focused on concurrency and type safety. `_Static_assert` catches bugs at compile time (is `int` at least 4 bytes on this platform?). `_Generic` gives C a limited form of function overloading — select different code paths based on the *type* of an expression, resolved at compile time. And `<stdatomic.h>` finally gave C a portable way to write lock-free concurrent code.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdalign.h>
+
+// _Static_assert: compile-time checks
+_Static_assert(sizeof(int) >= 4, "int must be at least 4 bytes");
+_Static_assert(sizeof(void*) >= 4, "pointers must be at least 32-bit");
+
+// _Generic: type-generic macros (like function overloading)
+#define type_name(x) _Generic((x), \\
+    int: "int", \\
+    float: "float", \\
+    double: "double", \\
+    char*: "char*", \\
+    default: "other")
+
+#define print_val(x) _Generic((x), \\
+    int: printf("%d\\n", x), \\
+    float: printf("%.2f\\n", x), \\
+    double: printf("%.4f\\n", x), \\
+    char*: printf("%s\\n", x))
+
+int main() {
+    printf("=== C11 Features ===\\n\\n");
+
+    // _Static_assert
+    printf("Static assertions: passed (compile-time)\\n");
+    printf("  sizeof(int) = %zu\\n", sizeof(int));
+    printf("  sizeof(void*) = %zu\\n\\n", sizeof(void*));
+
+    // _Generic
+    printf("Type-generic macros (_Generic):\\n");
+    printf("  42 is: %s\\n", type_name(42));
+    printf("  3.14f is: %s\\n", type_name(3.14f));
+    printf("  \"hi\" is: %s\\n", type_name("hi"));
+
+    printf("\\nprint_val outputs:\\n  ");
+    print_val(42);
+    printf("  ");
+    print_val(3.14f);
+    printf("  ");
+    print_val("hello");
+
+    // alignof / alignas
+    printf("\\nAlignment:\\n");
+    printf("  alignof(char) = %zu\\n", alignof(char));
+    printf("  alignof(int) = %zu\\n", alignof(int));
+    printf("  alignof(double) = %zu\\n", alignof(double));
+
+    // Anonymous structs
+    struct {
+        union {
+            struct { float x, y, z; };
+            float v[3];
+        };
+    } vec = { .x = 1.0f, .y = 2.0f, .z = 3.0f };
+
+    printf("\\nAnonymous struct/union:\\n");
+    printf("  vec.x = %.1f, vec.v[0] = %.1f\\n", vec.x, vec.v[0]);
+
+    return 0;
+}
+`} />
+
+## The Undefined Behavior Gallery
+
+Now let's look at UB concretely. Every item below is something the C standard says has no defined behavior. The compiler may assume it never happens and optimize based on that assumption. Some of these look harmless and will "work" in debug mode — then break mysteriously with `-O2`.
+
+**Why `-Wall -Werror` matters:** Many of these UB cases trigger compiler warnings. `-Wall` enables most warnings; `-Wextra` adds more; `-Werror` treats warnings as errors, so you can't accidentally ship code with potential UB. Make this your default: `gcc -Wall -Wextra -Werror -std=c11`. It catches uninitialized variables, missing returns, implicit conversions, format string mismatches, and many other common UB sources. It's far cheaper to fix a warning than debug a production crash caused by UB.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+int main() {
+    printf("=== Undefined Behavior (UB) Gallery ===\\n\\n");
+
+    printf("UB means the compiler can do ANYTHING:\\n");
+    printf("  - Produce garbage output\\n");
+    printf("  - Crash\\n");
+    printf("  - Delete your code (time travel!)\\n");
+    printf("  - Appear to work... until it doesn't\\n\\n");
+
+    printf("Common UB in C:\\n\\n");
+
+    // 1. Signed integer overflow
+    printf("1. Signed overflow\\n");
+    printf("   INT_MAX + 1 → undefined\\n");
+    printf("   (unsigned overflow wraps, signed is UB)\\n\\n");
+
+    // 2. Null pointer dereference
+    printf("2. NULL dereference\\n");
+    printf("   int *p = NULL; *p = 1; → UB\\n\\n");
+
+    // 3. Out-of-bounds access
+    printf("3. Buffer overflow\\n");
+    printf("   int a[10]; a[10] = 0; → UB\\n\\n");
+
+    // 4. Use after free
+    printf("4. Use after free\\n");
+    printf("   free(p); *p = 1; → UB\\n\\n");
+
+    // 5. Uninitialized variables
+    printf("5. Reading uninitialized memory\\n");
+    printf("   int x; printf(x); → UB\\n\\n");
+
+    // 6. Strict aliasing violation
+    printf("6. Strict aliasing\\n");
+    printf("   float f = 1.0;\\n");
+    printf("   int i = *(int*)&f; → UB (except char*)\\n\\n");
+
+    // 7. Modifying string literals
+    printf("7. Modifying string literals\\n");
+    printf("   char *s = \\\"hello\\\"; s[0] = 'H'; → UB\\n\\n");
+
+    // 8. Missing return
+    printf("8. Missing return in non-void function\\n");
+    printf("   int f() { /* no return */ } → UB\\n\\n");
+
+    // 9. Infinite loop without side effects
+    printf("9. Infinite loop (no side effects)\\n");
+    printf("   while(1) {} → UB in C11+\\n");
+    printf("   (compiler may assume it terminates!)\\n\\n");
+
+    // 10. Shift by negative or >= bit width
+    printf("10. Shift overflow\\n");
+    printf("    1 << 32 (32-bit int) → UB\\n");
+    printf("    1 << -1 → UB\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="warning">
+Compilers exploit UB for optimization. If `x + 1 > x` has signed overflow, the compiler assumes it's UB that won't happen and optimizes the check to `true`. This means: UB doesn't just mean "undefined result" — it can change the behavior of **other code** that looks correct.
+</Callout>
+
+## Strict Aliasing: The Subtle One
+
+Most UB items above are at least intuitively "wrong." Strict aliasing is different — it bites experienced programmers who think they know what they're doing.
+
+The rule: you may only access an object through a pointer of its actual type (or through `char*`). Casting a `float*` to an `int*` and dereferencing it is UB, even if the sizes match and it "works." Why? Because the compiler assumes pointers of different types don't alias (point to the same memory). This lets it keep values in registers and reorder loads and stores — critical optimizations that break if you've secretly aliased two pointers.
+
+The safe alternatives: use `memcpy` (the compiler optimizes it away — it's zero-cost at `-O2`), access through `char*` (always allowed), or use a union (common extension, explicitly allowed in C99+).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+int main() {
+    printf("=== Strict Aliasing Rule ===\\n\\n");
+
+    printf("Rule: You may only access an object through\\n");
+    printf("a pointer of compatible type (or char*).\\n\\n");
+
+    // WRONG (UB — strict aliasing violation):
+    // float f = 3.14f;
+    // uint32_t bits = *(uint32_t*)&f;  // UB!
+
+    // CORRECT: use memcpy
+    float f = 3.14f;
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(bits));
+    printf("float %.2f as bits: 0x%08X\\n\\n", f, bits);
+
+    // CORRECT: char* can alias anything
+    unsigned char bytes[4];
+    memcpy(bytes, &f, 4);
+    printf("float as bytes: ");
+    for (int i = 0; i < 4; i++) printf("%02X ", bytes[i]);
+    printf("\\n\\n");
+
+    // CORRECT: union for type punning (common extension)
+    union {
+        float f;
+        uint32_t u;
+    } pun;
+    pun.f = 3.14f;
+    printf("Union type pun: float=%.2f, uint=0x%08X\\n", pun.f, pun.u);
+
+    printf("\\nSafe type punning methods:\\n");
+    printf("  1. memcpy (always safe, compiler optimizes)\\n");
+    printf("  2. char* access (allowed by standard)\\n");
+    printf("  3. union (common extension, C99 allows it)\\n");
+
+    return 0;
+}
+`} />
+
+## Exercise: Safe Operations
+
+<Exercise
+  title="Overflow-safe arithmetic"
+  description="Read two integers A and B, and an operation (+, -, *). Perform the operation safely. If the result would overflow a 32-bit signed integer (range -2147483648 to 2147483647), print 'overflow'. Otherwise print the result."
+  starterCode={`#include <stdio.h>
+#include <limits.h>
+
+int safe_add(int a, int b, int *result) {
+    if ((b > 0 && a > INT_MAX - b) || (b < 0 && a < INT_MIN - b))
+        return 0;
+    *result = a + b;
+    return 1;
+}
+
+int safe_sub(int a, int b, int *result) {
+    if ((b < 0 && a > INT_MAX + b) || (b > 0 && a < INT_MIN + b))
+        return 0;
+    *result = a - b;
+    return 1;
+}
+
+int safe_mul(int a, int b, int *result) {
+    if (a == 0 || b == 0) { *result = 0; return 1; }
+    if (a > 0 && b > 0 && a > INT_MAX / b) return 0;
+    if (a < 0 && b < 0 && a < INT_MAX / b) return 0;
+    if (a > 0 && b < 0 && b < INT_MIN / a) return 0;
+    if (a < 0 && b > 0 && a < INT_MIN / b) return 0;
+    *result = a * b;
+    return 1;
+}
+
+int main() {
+    int a, b;
+    char op;
+    scanf("%d %c %d", &a, &op, &b);
+
+    int result;
+    int ok = 0;
+
+    switch (op) {
+        case '+': ok = safe_add(a, b, &result); break;
+        case '-': ok = safe_sub(a, b, &result); break;
+        case '*': ok = safe_mul(a, b, &result); break;
+    }
+
+    if (ok) printf("%d\\n", result);
+    else printf("overflow\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "100 + 200", expected_stdout: "300\n" },
+    { stdin: "2147483647 + 1", expected_stdout: "overflow\n" },
+    { stdin: "-2147483648 - 1", expected_stdout: "overflow\n" },
+    { stdin: "100000 * 100000", expected_stdout: "overflow\n" },
+    { stdin: "1000 * 1000", expected_stdout: "1000000\n" },
+    { stdin: "-5 + 3", expected_stdout: "-2\n" }
+  ]}
+  hints={[
+    "Check for overflow BEFORE performing the operation.",
+    "For addition: overflow if (b > 0 && a > INT_MAX - b).",
+    "For multiplication: check a > INT_MAX / b (when both positive).",
+    "Handle zero and negative cases separately."
+  ]}
+/>
+
+## Exercise: Type Size Verifier
+
+<Exercise
+  title="Print type sizes"
+  description="Print the sizes of common C types on this platform, one per line in the format 'type:N' where N is sizeof in bytes. Types to print in order: char, short, int, long, longlong, float, double, pointer."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    printf("char:%zu\\n", sizeof(char));
+    printf("short:%zu\\n", sizeof(short));
+    printf("int:%zu\\n", sizeof(int));
+    printf("long:%zu\\n", sizeof(long));
+    printf("longlong:%zu\\n", sizeof(long long));
+    printf("float:%zu\\n", sizeof(float));
+    printf("double:%zu\\n", sizeof(double));
+    printf("pointer:%zu\\n", sizeof(void*));
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "", expected_stdout: "char:1\nshort:2\nint:4\nlong:8\nlonglong:8\nfloat:4\ndouble:8\npointer:8\n" }
+  ]}
+  hints={[
+    "sizeof returns size_t, printed with %zu.",
+    "These sizes are platform-dependent — results shown are for 64-bit Linux.",
+    "char is always 1 byte by definition."
+  ]}
+/>
+
+## Congratulations!
+
+You've completed the entire C programming curriculum — from "Hello, World" to SIMD, undefined behavior, and systems programming.
+
+Key takeaways:
+- C gives you direct control over memory and hardware
+- With power comes responsibility — always validate at system boundaries
+- Use tools (GDB, Valgrind, sanitizers) to catch bugs early
+- Understand undefined behavior — the compiler is not your friend when UB occurs
+- Profile before optimizing — measure, don't guess
+
+Keep building things. Every great systems programmer started with `printf("Hello, World!\n");`.

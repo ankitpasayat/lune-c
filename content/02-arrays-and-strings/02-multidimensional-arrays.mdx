@@ -1,0 +1,221 @@
+---
+title: "Multidimensional Arrays"
+module: "Arrays and Strings"
+order: 2
+description: "Two-dimensional arrays, matrix operations, and row-major memory layout."
+difficulty: "beginner"
+---
+
+A grid, a table, a chessboard, a pixel display — these are all naturally two-dimensional.
+A 2D array in C lets you represent this structure: `matrix[row][col]`.
+
+But here's the twist: **memory is one-dimensional.** RAM is a single long ribbon of
+bytes. So when you declare `int m[3][4]`, C has to flatten those 12 elements into a
+line. Understanding *how* it does that is key to using 2D arrays correctly.
+
+## Declaring 2D Arrays
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // 3 rows, 4 columns
+    int matrix[3][4] = {
+        {1,  2,  3,  4},
+        {5,  6,  7,  8},
+        {9, 10, 11, 12}
+    };
+
+    // Access individual elements: matrix[row][col]
+    printf("matrix[0][0] = %d\\n", matrix[0][0]);  // 1
+    printf("matrix[1][2] = %d\\n", matrix[1][2]);  // 7
+    printf("matrix[2][3] = %d\\n", matrix[2][3]);  // 12
+
+    return 0;
+}
+`} time="O(1)" space="O(n*m)" />
+
+## Row-Major Order: How 2D Becomes 1D
+
+C uses **row-major order**: it stores the first row completely, then the second, then
+the third, all in a single contiguous block:
+
+```
+matrix[3][4] in memory:
+[1][2][3][4] [5][6][7][8] [9][10][11][12]
+ --- row 0 ---  --- row 1 ---  --- row 2 ---
+```
+
+To access `matrix[i][j]`, the compiler computes the address: `base + (i * 4 + j) * sizeof(int)`.
+That's why you need to know the number of columns — it determines how far each row
+is from the next.
+
+**Why this matters for performance:** when you iterate row-by-row (`matrix[i][0]`,
+`matrix[i][1]`, `matrix[i][2]`, ...), you're walking through memory sequentially.
+The CPU cache loves this — it pre-fetches nearby addresses. But if you iterate
+column-by-column (`matrix[0][j]`, `matrix[1][j]`, `matrix[2][j]`, ...), each access
+jumps forward by an entire row's width. For large matrices, this can be 10x slower.
+
+## Iterating Over 2D Arrays
+
+Use nested loops — outer for rows, inner for columns:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    int grid[3][3] = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
+    };
+
+    int rows = 3, cols = 3;
+
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            printf("%4d", grid[i][j]);
+        }
+        printf("\\n");
+    }
+
+    return 0;
+}
+`} time="O(n*m)" space="O(1)" />
+
+## Passing 2D Arrays to Functions
+
+When passing a 2D array to a function, you must specify the number of columns:
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_matrix(int rows, int cols, int mat[][4]) {
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            printf("%4d", mat[i][j]);
+        }
+        printf("\\n");
+    }
+}
+
+int sum_matrix(int rows, int cols, int mat[][4]) {
+    int total = 0;
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            total += mat[i][j];
+        }
+    }
+    return total;
+}
+
+int main() {
+    int m[2][4] = {
+        {1, 2, 3, 4},
+        {5, 6, 7, 8}
+    };
+
+    print_matrix(2, 4, m);
+    printf("Sum: %d\\n", sum_matrix(2, 4, m));
+
+    return 0;
+}
+`} time="O(n*m)" space="O(1)" />
+
+<Callout type="info">
+Why must you specify columns but not rows? Because the compiler needs the column
+count to compute the address formula: `mat[i][j]` is at `base + (i * cols + j) * sizeof(int)`.
+The number of rows doesn't appear in that formula — `i` is enough.
+</Callout>
+
+## Exercise: Matrix Row Sums
+
+<Exercise
+  title="Sum each row"
+  description="Read a 3x3 matrix (9 integers, row by row). Print the sum of each row on a separate line."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int mat[3][3];
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            scanf("%d", &mat[i][j]);
+        }
+    }
+
+    // Print the sum of each row
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1 2 3 4 5 6 7 8 9", expected_stdout: "6\n15\n24\n" },
+    { stdin: "0 0 0 0 0 0 0 0 0", expected_stdout: "0\n0\n0\n" },
+    { stdin: "1 1 1 2 2 2 3 3 3", expected_stdout: "3\n6\n9\n" }
+  ]}
+  hints={[
+    "For each row i, sum mat[i][0] + mat[i][1] + mat[i][2].",
+    "Use a nested loop or just add the three elements directly."
+  ]}
+/>
+
+## Exercise: Transpose a Matrix
+
+<Exercise
+  title="Transpose 3x3"
+  description="Read a 3x3 matrix. Print its transpose (rows become columns). Print each row on a separate line, values separated by spaces."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int mat[3][3];
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            scanf("%d", &mat[i][j]);
+        }
+    }
+
+    // Print the transpose
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1 2 3 4 5 6 7 8 9", expected_stdout: "1 4 7\n2 5 8\n3 6 9\n" },
+    { stdin: "1 0 0 0 1 0 0 0 1", expected_stdout: "1 0 0\n0 1 0\n0 0 1\n" }
+  ]}
+  hints={[
+    "The transpose swaps rows and columns: element [i][j] becomes [j][i].",
+    "Print mat[j][i] instead of mat[i][j] — loop j as the outer loop."
+  ]}
+/>
+
+## Exercise: Diagonal Sum
+
+<Exercise
+  title="Main diagonal sum"
+  description="Read a 3x3 matrix. Print the sum of the main diagonal elements (top-left to bottom-right)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int mat[3][3];
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            scanf("%d", &mat[i][j]);
+        }
+    }
+
+    // Print the sum of the main diagonal
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1 2 3 4 5 6 7 8 9", expected_stdout: "15\n" },
+    { stdin: "5 0 0 0 5 0 0 0 5", expected_stdout: "15\n" },
+    { stdin: "1 0 0 0 2 0 0 0 3", expected_stdout: "6\n" }
+  ]}
+  hints={[
+    "Main diagonal elements are where row index equals column index: mat[0][0], mat[1][1], mat[2][2].",
+    "Sum = mat[0][0] + mat[1][1] + mat[2][2], or use a loop: for (int i = 0; i < 3; i++) sum += mat[i][i];"
+  ]}
+/>

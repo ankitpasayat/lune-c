@@ -1,0 +1,6 @@
+{
+  "title": "Embedded & Constrained C",
+  "order": 17,
+  "phase": 6,
+  "description": "Write C for resource-limited environments: volatile, fixed-width types, bare-metal concepts, and state machines."
+}

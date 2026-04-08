@@ -1,0 +1,6 @@
+{
+  "title": "Dynamic Programming",
+  "order": 21,
+  "phase": 2,
+  "description": "Solve optimization problems by breaking them into overlapping subproblems with memoization and tabulation."
+}

@@ -1,0 +1,155 @@
+---
+title: "Functions"
+module: "C Fundamentals"
+order: 7
+description: "Breaking code into reusable pieces — declarations, definitions, parameters, return values, and scope."
+difficulty: "beginner"
+---
+
+So far, all our code has lived inside `main()`. As programs grow, you need to organize code into **functions** — named, reusable blocks that each do one thing.
+
+## Your First Function
+
+<Editor defaultCode={`#include <stdio.h>\n\n// Function definition\nint square(int n) {\n    return n * n;\n}\n\nint main() {\n    printf("3 squared = %d\\n", square(3));\n    printf("7 squared = %d\\n", square(7));\n    printf("12 squared = %d\\n", square(12));\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+A function has four parts:
+1. **Return type** — `int` (the type of value it gives back)
+2. **Name** — `square`
+3. **Parameters** — `int n` (input values)
+4. **Body** — the code inside `{ }`, ending with `return`
+
+## void Functions
+
+Functions that don't return anything use `void`:
+
+<Editor defaultCode={`#include <stdio.h>\n\nvoid greet(int times) {\n    for (int i = 0; i < times; i++) {\n        printf("Hello!\\n");\n    }\n    // No return statement needed (or use: return;)\n}\n\nint main() {\n    greet(3);\n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+## Multiple Parameters
+
+Functions can take multiple inputs:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint max(int a, int b) {\n    if (a > b) {\n        return a;\n    }\n    return b;\n}\n\nint clamp(int value, int low, int high) {\n    if (value < low) return low;\n    if (value > high) return high;\n    return value;\n}\n\nint main() {\n    printf("max(3, 7) = %d\\n", max(3, 7));\n    printf("max(10, 2) = %d\\n", max(10, 2));\n    printf("clamp(15, 0, 10) = %d\\n", clamp(15, 0, 10));\n    printf("clamp(-5, 0, 10) = %d\\n", clamp(-5, 0, 10));\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Function Declarations (Prototypes)
+
+In C, a function must be declared before it's used. If you want to define `main` first, you need a **function prototype**:
+
+<Editor defaultCode={`#include <stdio.h>\n\n// Function prototype (declaration)\nint add(int a, int b);\n\nint main() {\n    printf("%d\\n", add(3, 4));  // Works because of the prototype above\n    return 0;\n}\n\n// Function definition (can come after main)\nint add(int a, int b) {\n    return a + b;\n}\n`} time="O(1)" space="O(1)" />
+
+The prototype tells the compiler: "this function exists, takes these parameter types, and returns this type." The actual code comes later.
+
+<Callout type="info">
+This is what header files (`.h` files) are for — they contain function prototypes so other files can call your functions. We'll explore this in detail in the multi-file projects lesson.
+</Callout>
+
+## Pass by Value
+
+C functions receive **copies** of their arguments. Modifying a parameter inside a function does NOT affect the original:
+
+<Editor defaultCode={`#include <stdio.h>\n\nvoid try_to_modify(int x) {\n    x = 999;\n    printf("Inside function: x = %d\\n", x);\n}\n\nint main() {\n    int num = 42;\n    printf("Before: num = %d\\n", num);\n    \n    try_to_modify(num);\n    \n    printf("After:  num = %d\\n", num);  // Still 42!\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+This is a fundamental concept in C: **everything is passed by value**. The function gets its own copy. To modify the original, you need pointers — which we'll cover in a later module.
+</Callout>
+
+## Variable Scope
+
+Variables exist only within the block `{}` where they're declared:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint global = 100;  // Global: accessible everywhere\n\nvoid demo() {\n    int local = 50;  // Local to demo()\n    printf("In demo: global=%d, local=%d\\n", global, local);\n}\n\nint main() {\n    int main_var = 10;  // Local to main()\n    \n    printf("In main: global=%d, main_var=%d\\n", global, main_var);\n    demo();\n    \n    // printf("%d", local);    // ERROR: local is not accessible here\n    \n    // Block scope\n    {\n        int block_var = 5;\n        printf("In block: block_var=%d\\n", block_var);\n    }\n    // printf("%d", block_var); // ERROR: block_var is out of scope\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Scope rules:
+- **Global variables** — declared outside all functions, accessible everywhere
+- **Local variables** — declared inside a function or block, accessible only within that block
+- **Parameters** — behave like local variables within the function
+
+<Callout type="tip">
+Avoid global variables when possible. They make programs harder to understand and debug because any function can change them. Prefer passing data through parameters and return values.
+</Callout>
+
+## Variadic Functions
+
+Some functions accept a **variable number of arguments**. You've already been using one: `printf("x=%d y=%d", x, y)` takes as many arguments as there are format specifiers. You can write your own using `<stdarg.h>`:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdarg.h>\n\n// Sum a variable number of integers\n// The first argument 'count' tells us how many follow\nint sum(int count, ...) {\n    va_list args;          // Declare a variable to hold the argument list\n    va_start(args, count); // Initialize it, starting after 'count'\n    \n    int total = 0;\n    for (int i = 0; i < count; i++) {\n        total += va_arg(args, int);  // Get next int argument\n    }\n    \n    va_end(args);          // Clean up\n    return total;\n}\n\nint main() {\n    printf("sum(3, 10, 20, 30) = %d\\n", sum(3, 10, 20, 30));\n    printf("sum(5, 1, 2, 3, 4, 5) = %d\\n", sum(5, 1, 2, 3, 4, 5));\n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+The key pieces: `va_list` holds the argument state, `va_start` initializes it after the last named parameter, `va_arg` retrieves the next argument (you must specify the type), and `va_end` cleans up. The function needs *some* way to know how many arguments were passed — either a count parameter (like above) or a sentinel value.
+
+<Callout type="info">
+This is exactly how `printf` works internally — it parses the format string to determine how many arguments to expect and what types they are. If you pass the wrong number or types, there's no compile-time safety net: it's undefined behavior.
+</Callout>
+
+## Recursion
+
+A function can call itself. This is called **recursion**:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint factorial(int n) {\n    if (n <= 1) return 1;       // Base case\n    return n * factorial(n - 1); // Recursive case\n}\n\nint fibonacci(int n) {\n    if (n <= 0) return 0;\n    if (n == 1) return 1;\n    return fibonacci(n - 1) + fibonacci(n - 2);\n}\n\nint main() {\n    printf("5! = %d\\n", factorial(5));\n    printf("10! = %d\\n", factorial(10));\n    \n    printf("\\nFirst 10 Fibonacci numbers:\\n");\n    for (int i = 0; i < 10; i++) {\n        printf("%d ", fibonacci(i));\n    }\n    printf("\\n");\n    \n    return 0;\n}\n`} time="O(2^n)" space="O(n)" />
+
+Every recursive function needs:
+1. **Base case** — when to stop recursing
+2. **Recursive case** — the function calls itself with a "smaller" problem
+
+<Callout type="warning">
+Without a base case, recursion runs forever (until the stack overflows and your program crashes). Always make sure recursive calls move toward the base case.
+</Callout>
+
+## Exercise: Power Function
+
+<Exercise
+  title="Integer power"
+  description="Write a function int power(int base, int exp) that returns base raised to the power exp (exp ≥ 0). Read base and exp from stdin, print the result."
+  starterCode={`#include <stdio.h>\n\nint power(int base, int exp) {\n    // Return base^exp\n    return 0; // Fix this\n}\n\nint main() {\n    int base, exp;\n    scanf("%d %d", &base, &exp);\n    printf("%d\\n", power(base, exp));\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "2 10", expected_stdout: "1024\n" },
+    { stdin: "3 4", expected_stdout: "81\n" },
+    { stdin: "5 0", expected_stdout: "1\n" },
+    { stdin: "7 1", expected_stdout: "7\n" }
+  ]}
+  hints={[
+    "Use a loop: start with result = 1, multiply by base exp times.",
+    "Or use recursion: power(base, exp) = base * power(base, exp - 1), with base case exp == 0 returning 1."
+  ]}
+/>
+
+## Exercise: Is Prime
+
+<Exercise
+  title="Prime check"
+  description="Write a function int is_prime(int n) that returns 1 if n is prime, 0 otherwise. Read an integer, print 'prime' or 'not prime'."
+  starterCode={`#include <stdio.h>\n\nint is_prime(int n) {\n    // Return 1 if n is prime, 0 otherwise\n    return 0; // Fix this\n}\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    if (is_prime(n)) {\n        printf("prime\\n");\n    } else {\n        printf("not prime\\n");\n    }\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "7", expected_stdout: "prime\n" },
+    { stdin: "12", expected_stdout: "not prime\n" },
+    { stdin: "2", expected_stdout: "prime\n" },
+    { stdin: "1", expected_stdout: "not prime\n" },
+    { stdin: "97", expected_stdout: "prime\n" }
+  ]}
+  hints={[
+    "Numbers less than 2 are not prime.",
+    "Check if any number from 2 to sqrt(n) divides n evenly. If so, it's not prime.",
+    "You can check i * i <= n instead of computing sqrt(n)."
+  ]}
+/>
+
+## Exercise: GCD
+
+<Exercise
+  title="Greatest Common Divisor"
+  description="Write a function int gcd(int a, int b) using the Euclidean algorithm: gcd(a, b) = gcd(b, a % b), with base case gcd(a, 0) = a. Read two integers, print their GCD."
+  starterCode={`#include <stdio.h>\n\nint gcd(int a, int b) {\n    // Euclidean algorithm\n    return 0; // Fix this\n}\n\nint main() {\n    int a, b;\n    scanf("%d %d", &a, &b);\n    printf("%d\\n", gcd(a, b));\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "12 8", expected_stdout: "4\n" },
+    { stdin: "100 75", expected_stdout: "25\n" },
+    { stdin: "7 13", expected_stdout: "1\n" },
+    { stdin: "0 5", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "Base case: if b == 0, return a.",
+    "Recursive case: return gcd(b, a % b).",
+    "This can also be done with a while loop: while (b != 0) { int temp = b; b = a % b; a = temp; }"
+  ]}
+/>
+
+## What's Next
+
+You've completed the C fundamentals! You know how to write, compile, and organize C programs with variables, operators, conditionals, loops, and functions. Next we'll tackle **arrays and strings** — working with collections of data.

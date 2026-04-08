@@ -1,0 +1,363 @@
+---
+title: "Circular Linked Lists"
+module: "Linked Lists"
+order: 3
+description: "Linked lists where the tail connects back to the head — useful for round-robin patterns."
+difficulty: "intermediate"
+---
+
+Every linked list we've built so far has a clear end: the last node's `next` pointer is `NULL`. That `NULL` is a stop sign. It says "you've reached the end, turn back."
+
+But what if you don't *want* an end?
+
+In a circular linked list, the last node's `next` pointer doesn't point to `NULL` — it points back to the first node. The list forms a ring. If you follow the pointers, you'll loop around forever. There is no "end."
+
+This sounds like a bug — and it would be, if you stumbled into it accidentally. But when it's intentional, it's a powerful pattern. Circular lists naturally model anything that repeats in a cycle:
+
+- **Round-robin scheduling**: An operating system cycles through processes, giving each a time slice. When it reaches the last process, it wraps back to the first. No special "restart" logic needed — just keep following `next`.
+- **Circular buffers**: A fixed ring of memory slots where new data overwrites the oldest. Audio processing, network packet queues, and keyboard input all use this pattern.
+- **Turn-based games**: Players take turns in a circle. After the last player goes, it's the first player's turn again. The circular list makes this wrap-around natural.
+- **The Josephus problem**: People stand in a circle and every k-th person is eliminated. This classical math problem maps directly to a circular linked list.
+
+The key mental shift: instead of checking `curr != NULL` to stop, you check `curr != head` (or `curr != starting_point`) to detect that you've gone all the way around. If you forget this, your loop runs forever. That's the danger — and the discipline — of circular structures.
+
+## Circular Singly Linked List
+
+Here's an interesting design choice: instead of tracking the **head**, we track the **tail**. Why? Because with a circular list, `tail->next` gives us the head for free. So a single tail pointer gives us O(1) access to *both* ends of the list. That's a nice trick — with a head pointer alone, reaching the tail would require a full traversal.
+
+```
+  Tracking tail:
+
+  tail -> [30] ---> [10] ---> [20] ---> [30] (back to tail)
+            ^                             |
+            |_____________________________|
+
+  tail gives us the last element directly.
+  tail->next gives us the first element (head).
+```
+
+When inserting a new element, we slip it between the tail and the head: the new node's `next` points to the head, and the old tail's `next` points to the new node. Then the new node becomes the new tail. This keeps everything in O(1).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int data) {
+    Node *n = malloc(sizeof(Node));
+    n->data = data;
+    n->next = n;  // points to itself initially
+    return n;
+}
+
+// Insert after the tail, return new tail
+Node *insert(Node *tail, int data) {
+    Node *new_node = create_node(data);
+    if (tail == NULL) {
+        return new_node;  // single element, points to itself
+    }
+    new_node->next = tail->next;  // new node points to head
+    tail->next = new_node;        // old tail points to new node
+    return new_node;              // new node becomes tail
+}
+
+void print_list(Node *tail) {
+    if (tail == NULL) {
+        printf("(empty)\\n");
+        return;
+    }
+    Node *head = tail->next;
+    Node *curr = head;
+    do {
+        printf("%d ", curr->data);
+        curr = curr->next;
+    } while (curr != head);
+    printf("\\n");
+}
+
+void free_list(Node *tail) {
+    if (tail == NULL) return;
+    Node *curr = tail->next;  // start at head
+    while (curr != tail) {
+        Node *t = curr;
+        curr = curr->next;
+        free(t);
+    }
+    free(tail);
+}
+
+int main() {
+    Node *tail = NULL;
+    tail = insert(tail, 10);
+    tail = insert(tail, 20);
+    tail = insert(tail, 30);
+
+    print_list(tail);  // 10 20 30
+    free_list(tail);
+    return 0;
+}
+`} time="O(1) insert" space="O(n)" />
+
+<Callout type="info">
+We track the **tail** instead of the head. This gives us O(1) access to both the tail (directly) and the head (`tail->next`), making both front and back operations fast.
+</Callout>
+
+Notice `print_list` uses a `do...while` loop instead of the usual `while`. That's because in a circular list, there's no `NULL` to stop at. We start at the head and keep going until we arrive back at the head. A `while` loop would check the condition *before* the first iteration and immediately stop (since `curr == head` at the start). The `do...while` guarantees we process the first node before checking.
+
+Also notice `create_node` sets `n->next = n` — a single node points to *itself*. That's a circle of one. It might look odd, but it's correct: a list with one element is still circular, and following `next` from that element brings you right back.
+
+## Why Circular?
+
+The Josephus problem is the classic illustration. Picture N people standing in a circle, numbered 1 through N. Starting from person 1, you count around the circle and eliminate every k-th person. The survivors close the gap and counting continues from the next person. This repeats until one person remains.
+
+With a regular linked list, you'd have to detect "I've reached the end, wrap back to the start." With a circular list, wrapping is automatic — you just keep following `next`. The algorithm is simply: count k-1 steps, delete the node, repeat.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_circle(int n) {
+    Node *head = malloc(sizeof(Node));
+    head->data = 1;
+    head->next = head;
+
+    Node *prev = head;
+    for (int i = 2; i <= n; i++) {
+        Node *node = malloc(sizeof(Node));
+        node->data = i;
+        node->next = head;
+        prev->next = node;
+        prev = node;
+    }
+    return head;
+}
+
+// Josephus problem: n people in a circle, eliminate every k-th
+void josephus(int n, int k) {
+    Node *curr = create_circle(n);
+
+    // Find the node before curr (the tail)
+    Node *prev = curr;
+    while (prev->next != curr) {
+        prev = prev->next;
+    }
+
+    printf("Elimination order: ");
+    while (curr->next != curr) {
+        // Count k-1 steps
+        for (int i = 1; i < k; i++) {
+            prev = curr;
+            curr = curr->next;
+        }
+        printf("%d ", curr->data);
+        prev->next = curr->next;
+        Node *to_free = curr;
+        curr = curr->next;
+        free(to_free);
+    }
+    printf("\\nSurvivor: %d\\n", curr->data);
+    free(curr);
+}
+
+int main() {
+    josephus(7, 3);
+    return 0;
+}
+`} time="O(n*k)" space="O(n)" />
+
+<Callout type="tip">
+The **Josephus problem** is a classic interview question. People sit in a circle and every k-th person is eliminated until one survivor remains. The circular linked list makes this natural to implement.
+</Callout>
+
+The termination condition is beautiful in its simplicity: `curr->next != curr`. When only one person remains, they point to *themselves*. A circle of one. That's both the base case and the answer.
+
+## Circular Doubly Linked List
+
+You can combine both ideas — circular *and* doubly linked. Now every node has `prev` and `next`, and the list forms a ring in both directions. The head's `prev` points to the tail, and the tail's `next` points to the head.
+
+This is actually the most common linked list implementation in production systems (like the Linux kernel's `list_head`). It gives you O(1) insertion and deletion at both ends, bidirectional traversal, and no NULL checks — because there are no NULLs.
+
+The `print_circle` function below demonstrates the wrap-around: it prints 9 values from a 3-node list, cycling through the ring three times.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct DNode {
+    int data;
+    struct DNode *prev;
+    struct DNode *next;
+} DNode;
+
+DNode *create_node(int data) {
+    DNode *n = malloc(sizeof(DNode));
+    n->data = data;
+    n->prev = n;
+    n->next = n;
+    return n;
+}
+
+void insert_after(DNode *node, int data) {
+    DNode *new_n = create_node(data);
+    new_n->next = node->next;
+    new_n->prev = node;
+    node->next->prev = new_n;
+    node->next = new_n;
+}
+
+void print_circle(DNode *head, int count) {
+    DNode *curr = head;
+    for (int i = 0; i < count; i++) {
+        printf("%d ", curr->data);
+        curr = curr->next;
+    }
+    printf("\\n");
+}
+
+void free_circle(DNode *head) {
+    if (!head) return;
+    DNode *curr = head->next;
+    while (curr != head) {
+        DNode *t = curr;
+        curr = curr->next;
+        free(t);
+    }
+    free(head);
+}
+
+int main() {
+    DNode *head = create_node(1);
+    insert_after(head, 2);
+    insert_after(head->next, 3);
+
+    printf("Three laps: ");
+    print_circle(head, 9);  // 1 2 3 1 2 3 1 2 3
+
+    free_circle(head);
+    return 0;
+}
+`} time="O(1) insert" space="O(n)" />
+
+Look at `insert_after` carefully — it updates four pointers:
+1. `new_n->next = node->next` — the new node points forward to what was after `node`.
+2. `new_n->prev = node` — the new node points back to `node`.
+3. `node->next->prev = new_n` — the old next-neighbor now points back to the new node.
+4. `node->next = new_n` — `node` now points forward to the new node.
+
+**Order matters!** Step 3 must happen *before* step 4. If you did step 4 first, then `node->next` would already point to `new_n`, and `node->next->prev` would set `new_n->prev` instead of the old neighbor's `prev`. Always update the pointers that *read* the old values before overwriting them.
+
+## Exercise: Round Robin
+
+<Exercise
+  title="Round robin printing"
+  description="Read N (number of people) and R (number of rounds). Print numbers 1 through N, repeating for R full rounds, all space-separated on one line."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n, r;
+    scanf("%d %d", &n, &r);
+
+    // Build circular list 1..n
+    // Traverse r*n times, printing each value
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 2", expected_stdout: "1 2 3 1 2 3\n" },
+    { stdin: "4 1", expected_stdout: "1 2 3 4\n" },
+    { stdin: "2 3", expected_stdout: "1 2 1 2 1 2\n" }
+  ]}
+  hints={[
+    "Build a circular list of n nodes with values 1 to n.",
+    "The total number of prints is n * r.",
+    "Use a do-while or for loop that advances curr = curr->next each iteration."
+  ]}
+/>
+
+## Exercise: Josephus Survivor
+
+<Exercise
+  title="Find the survivor"
+  description="Read N (people in circle, numbered 1 to N) and K (every K-th person is eliminated). Print the number of the last survivor."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n, k;
+    scanf("%d %d", &n, &k);
+
+    // Build circular list 1..n
+    // Eliminate every k-th person
+    // Print the survivor
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7 3", expected_stdout: "4\n" },
+    { stdin: "5 2", expected_stdout: "3\n" },
+    { stdin: "1 1", expected_stdout: "1\n" },
+    { stdin: "6 1", expected_stdout: "6\n" }
+  ]}
+  hints={[
+    "Build the circle, then keep a 'prev' pointer so you can unlink nodes.",
+    "Count k-1 steps from current, then delete the k-th node.",
+    "When curr->next == curr, only one person remains — that's the survivor.",
+    "For k=1, people are eliminated in order 1,2,3... so the last is N."
+  ]}
+/>
+
+## Exercise: Count Nodes in a Circular List
+
+<Exercise
+  title="Count elements"
+  description="Read integers until you see -1 (don't include -1). Build a circular list from the values. Print how many nodes are in the list."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    // Read values until -1
+    // Build circular list
+    // Count and print the number of nodes
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "10 20 30 -1", expected_stdout: "3\n" },
+    { stdin: "-1", expected_stdout: "0\n" },
+    { stdin: "5 -1", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "Read in a loop: while scanf gives a value and it's not -1, add to list.",
+    "For an empty list (first value is -1), print 0.",
+    "To count: start from head, follow next until you return to head."
+  ]}
+/>
+
+## What's Next
+
+Time to put all your linked list skills together with some **classic linked list exercises** — reversing, detecting cycles, and merging sorted lists.

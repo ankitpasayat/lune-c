@@ -1,0 +1,121 @@
+---
+title: "Pointer Arithmetic"
+module: "Pointers and Memory"
+order: 2
+description: "How pointers and arrays relate, incrementing pointers, and navigating memory."
+difficulty: "intermediate"
+---
+
+Pointers and arrays are deeply connected in C. Understanding pointer arithmetic unlocks the ability to work with data at the memory level.
+
+## Arrays and Pointers
+
+An array name acts as a pointer to its first element:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int arr[] = {10, 20, 30, 40, 50};\n    int *p = arr;  // p points to arr[0] (no & needed)\n    \n    printf("arr[0] = %d\\n", *p);       // 10\n    printf("arr[1] = %d\\n", *(p + 1)); // 20\n    printf("arr[2] = %d\\n", *(p + 2)); // 30\n    \n    // These are equivalent:\n    printf("\\narr[3] = %d\\n", arr[3]);     // Bracket notation\n    printf("arr[3] = %d\\n", *(arr + 3));  // Pointer arithmetic\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+In C, `arr[i]` is literally defined as `*(arr + i)`. The bracket notation is just syntactic sugar for pointer arithmetic. This is why array indices start at 0: `arr[0]` = `*(arr + 0)` = the element at the start.
+</Callout>
+
+## Incrementing Pointers
+
+When you add 1 to a pointer, it moves forward by the **size of the pointed-to type**, not by 1 byte:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int arr[] = {10, 20, 30, 40, 50};\n    int *p = arr;\n    \n    printf("p   points to %d (address %p)\\n", *p, (void *)p);\n    p++;  // Move to next int (forward 4 bytes)\n    printf("p+1 points to %d (address %p)\\n", *p, (void *)p);\n    p++;  // Move to next int (forward another 4 bytes)\n    printf("p+2 points to %d (address %p)\\n", *p, (void *)p);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+This is why pointer types matter:
+- `int *p; p++` moves forward 4 bytes (sizeof int)
+- `char *p; p++` moves forward 1 byte (sizeof char)
+- `double *p; p++` moves forward 8 bytes (sizeof double)
+
+## Iterating with Pointers
+
+You can traverse an array using a pointer instead of an index:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int arr[] = {1, 2, 3, 4, 5};\n    int n = 5;\n    \n    // Index-based iteration\n    printf("Index:   ");\n    for (int i = 0; i < n; i++) {\n        printf("%d ", arr[i]);\n    }\n    printf("\\n");\n    \n    // Pointer-based iteration\n    printf("Pointer: ");\n    for (int *p = arr; p < arr + n; p++) {\n        printf("%d ", *p);\n    }\n    printf("\\n");\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+## Pointer Subtraction
+
+Subtracting two pointers gives the number of elements between them:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int arr[] = {10, 20, 30, 40, 50};\n    int *start = &arr[0];\n    int *end = &arr[4];\n    \n    printf("Elements between: %ld\\n", end - start);  // 4\n    \n    // Useful for finding an element's index\n    int *found = &arr[2];\n    printf("Index of 30: %ld\\n", found - arr);  // 2\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+You can only subtract pointers that point into the same array. Subtracting pointers to unrelated variables is undefined behavior.
+</Callout>
+
+## Pointer Comparison
+
+Pointers into the same array can be compared:
+
+```c
+int arr[5];
+int *p = &arr[1];
+int *q = &arr[3];
+
+if (p < q)   // true: p points to an earlier element
+if (p == q)  // false: different positions
+if (p != q)  // true
+```
+
+## Functions with Pointer Parameters
+
+Passing an array to a function always passes a pointer:
+
+<Editor defaultCode={`#include <stdio.h>\n\n// These three declarations are equivalent:\n// void print_array(int arr[], int n)\n// void print_array(int *arr, int n)\nvoid print_array(int *arr, int n) {\n    for (int i = 0; i < n; i++) {\n        printf("%d ", arr[i]);  // Can use [] with pointers too\n    }\n    printf("\\n");\n}\n\nvoid double_elements(int *arr, int n) {\n    for (int *p = arr; p < arr + n; p++) {\n        *p *= 2;  // Modifies the original array!\n    }\n}\n\nint main() {\n    int data[] = {1, 2, 3, 4, 5};\n    \n    print_array(data, 5);\n    double_elements(data, 5);\n    print_array(data, 5);  // All values doubled\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+## Exercise: Sum Using Pointers
+
+<Exercise
+  title="Array sum with pointer arithmetic"
+  description="Read N integers. Write a function int sum(int *arr, int n) that calculates the sum using pointer arithmetic (not arr[i]). Print the sum."
+  starterCode={`#include <stdio.h>\n\nint sum(int *arr, int n) {\n    int total = 0;\n    // Use pointer arithmetic to sum the elements\n    \n    return total;\n}\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int arr[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%d", &arr[i]);\n    }\n    \n    printf("%d\\n", sum(arr, n));\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "15\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "60\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "Use a pointer: for (int *p = arr; p < arr + n; p++) total += *p;",
+    "Or: for (int i = 0; i < n; i++) total += *(arr + i);"
+  ]}
+/>
+
+## Exercise: Find Element
+
+<Exercise
+  title="Linear search returning pointer"
+  description="Read N integers, then a target. Write a function int *find(int *arr, int n, int target) that returns a pointer to the first occurrence of target, or NULL if not found. Print the index if found, or -1."
+  starterCode={`#include <stdio.h>\n\nint *find(int *arr, int n, int target) {\n    // Return pointer to target, or NULL\n    return NULL; // Fix this\n}\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int arr[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%d", &arr[i]);\n    }\n    \n    int target;\n    scanf("%d", &target);\n    \n    int *result = find(arr, n, target);\n    if (result != NULL) {\n        printf("%ld\\n", result - arr);  // Index\n    } else {\n        printf("-1\\n");\n    }\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5\n10 20 30 40 50\n30", expected_stdout: "2\n" },
+    { stdin: "4\n1 2 3 4\n5", expected_stdout: "-1\n" },
+    { stdin: "3\n7 7 7\n7", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Loop through the array. If *p == target or arr[i] == target, return the pointer.",
+    "for (int *p = arr; p < arr + n; p++) { if (*p == target) return p; } return NULL;"
+  ]}
+/>
+
+## Exercise: Reverse Array In Place
+
+<Exercise
+  title="Reverse with two pointers"
+  description="Read N integers. Reverse the array in place using two pointers (one at start, one at end). Print the reversed array, space-separated."
+  starterCode={`#include <stdio.h>\n\nvoid reverse(int *arr, int n) {\n    int *left = arr;\n    int *right = arr + n - 1;\n    \n    // Swap elements moving inward\n}\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int arr[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%d", &arr[i]);\n    }\n    \n    reverse(arr, n);\n    \n    for (int i = 0; i < n; i++) {\n        printf("%d", arr[i]);\n        if (i < n - 1) printf(" ");\n    }\n    printf("\\n");\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "5 4 3 2 1\n" },
+    { stdin: "4\n10 20 30 40", expected_stdout: "40 30 20 10\n" },
+    { stdin: "1\n7", expected_stdout: "7\n" }
+  ]}
+  hints={[
+    "While left < right, swap *left and *right, then move both inward.",
+    "while (left < right) { int temp = *left; *left = *right; *right = temp; left++; right--; }"
+  ]}
+/>
+
+## What's Next
+
+Now that you understand the pointer-array relationship, let's learn about **dynamic memory allocation** — using `malloc`, `calloc`, `realloc`, and `free` to allocate memory at runtime.

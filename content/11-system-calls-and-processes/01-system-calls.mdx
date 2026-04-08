@@ -1,0 +1,302 @@
+---
+title: "System Calls"
+module: "System Calls & Processes"
+order: 1
+description: "What system calls are, how they work, and common POSIX system calls in C."
+difficulty: "advanced"
+---
+
+Your C program lives in a cage. It can manipulate its own memory, do arithmetic, call functions — but it **cannot** touch the disk, the network, or any hardware device. Not directly. The CPU itself enforces this boundary.
+
+This is the fundamental split in every modern operating system: **user space** vs **kernel space**. Your program runs in user space, where it's isolated and safe. The kernel runs in kernel space, where it has unrestricted access to hardware. The *only* way for your program to cross this boundary is through a **system call**.
+
+## The Restaurant Kitchen Analogy
+
+Think of a restaurant. You (the program) sit in the dining room. The kitchen (the kernel) has all the knives, fire, and raw ingredients (hardware). You don't get to walk into the kitchen and start cooking — that would be dangerous and chaotic. Instead, you place an **order** (a system call) through a well-defined interface (the waiter/menu). The kitchen prepares what you need and hands it back.
+
+This design exists for three reasons:
+
+1. **Protection** — a buggy program can't corrupt the disk or crash the network stack
+2. **Abstraction** — programs don't need to know which specific hard drive or network card is installed
+3. **Sharing** — the kernel can safely multiplex hardware among many programs
+
+## How a System Call Actually Works
+
+When your program calls `write()`, here's what happens at the CPU level:
+
+1. Your code places the system call number and arguments into specific CPU registers
+2. It executes a special **trap instruction** (on x86-64, this is `syscall`)
+3. The CPU switches from user mode to kernel mode and jumps to the kernel's syscall handler
+4. The kernel validates the arguments, does the work (writes bytes to disk, sends network packets, etc.)
+5. The kernel places the result in a register and switches back to user mode
+6. Your program continues, reading the return value
+
+This mode switch is expensive — roughly 100-1000x slower than a regular function call. That's why libraries like `stdio` buffer operations: `printf()` collects characters in a userspace buffer and only issues the `write()` system call when the buffer is full (or when you flush it).
+
+## Library Functions vs System Calls
+
+Most C standard library functions you've used are thin wrappers around system calls, adding convenience like buffering and error formatting:
+
+| Library Function | System Call | What the wrapper adds |
+|-----------------|-------------|----------------------|
+| `printf()` | `write()` | Formatting + buffering |
+| `fopen()` | `open()` | FILE* abstraction + buffering |
+| `malloc()` | `brk()`/`mmap()` | Heap management + free-list |
+| `fread()` | `read()` | Buffered reads |
+
+<Callout type="info">
+Most system calls are defined in POSIX (Portable Operating System Interface). Code using POSIX calls works on Linux, macOS, and most Unix systems but not directly on Windows.
+</Callout>
+
+## The Fundamental Quartet: open, read, write, close
+
+At the heart of Unix I/O are just four system calls. Almost everything — files, pipes, sockets, devices — uses this same interface:
+
+- **`open()`** — "give me a handle to this resource"
+- **`read()`** — "copy bytes from this handle into my buffer"
+- **`write()`** — "copy bytes from my buffer to this handle"
+- **`close()`** — "I'm done with this handle"
+
+This uniformity is one of Unix's great design insights: a file, a network connection, and a terminal are all just byte streams that you open, read/write, and close.
+
+## File Descriptors: Small Integers as Handles
+
+When `open()` gives you a handle, it's not a pointer or a struct — it's just a small non-negative integer called a **file descriptor** (fd). Internally, the kernel maintains a per-process table of open resources. The file descriptor is simply the index into that table.
+
+Every process starts with three file descriptors already open:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// System call equivalents using stdio
+// In real POSIX code, you'd use:
+// #include <unistd.h>
+// #include <fcntl.h>
+// int fd = open("file.txt", O_RDONLY);
+// ssize_t n = read(fd, buf, sizeof(buf));
+// write(fd, buf, n);
+// close(fd);
+
+int main() {
+    printf("=== File Descriptor Basics ===\\n\\n");
+
+    printf("Standard file descriptors:\\n");
+    printf("  0 = stdin  (standard input)\\n");
+    printf("  1 = stdout (standard output)\\n");
+    printf("  2 = stderr (standard error)\\n\\n");
+
+    // When we call printf, internally it does:
+    // write(1, "Hello\\n", 6);  // fd=1 is stdout
+
+    // Demo: write to stderr
+    fprintf(stderr, "This goes to stderr (fd 2)\\n");
+    fprintf(stdout, "This goes to stdout (fd 1)\\n");
+
+    printf("\\n=== open() flags ===\\n");
+    printf("O_RDONLY  - read only\\n");
+    printf("O_WRONLY  - write only\\n");
+    printf("O_RDWR   - read and write\\n");
+    printf("O_CREAT  - create if doesn't exist\\n");
+    printf("O_TRUNC  - truncate to zero length\\n");
+    printf("O_APPEND - append to end\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+When you open a new file, the kernel assigns the **lowest available** file descriptor. So the first file you open gets fd 3, the next gets fd 4, and so on. When you close an fd, that slot becomes available for reuse. This detail matters more than you might think — it's the mechanism behind I/O redirection, which we'll see in a later lesson.
+
+## Error Handling with errno
+
+System calls can fail — the file might not exist, you might not have permission, the disk could be full. When a system call fails, it returns -1 and sets a global variable called `errno` to a specific error code. This is a different convention from the C standard library (where functions often return NULL or EOF on failure).
+
+The `strerror()` function converts an errno value into a human-readable string, and `perror()` prints it directly to stderr with a prefix:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
+int main() {
+    // Try to open a non-existent file
+    FILE *f = fopen("/nonexistent/file.txt", "r");
+    if (f == NULL) {
+        printf("Error number: %d\\n", errno);
+        printf("Error message: %s\\n", strerror(errno));
+        perror("fopen failed");
+    }
+
+    printf("\\nCommon errno values:\\n");
+    printf("  ENOENT (%d): No such file or directory\\n", ENOENT);
+    printf("  EACCES (%d): Permission denied\\n", EACCES);
+    printf("  ENOMEM (%d): Out of memory\\n", ENOMEM);
+    printf("  EINVAL (%d): Invalid argument\\n", EINVAL);
+    printf("  EEXIST (%d): File exists\\n", EEXIST);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Always check `errno` immediately after a failed call. Any subsequent successful call might overwrite it. And never check `errno` after a successful call — its value is undefined in that case.
+</Callout>
+
+## Environment Variables
+
+Every process inherits a set of **environment variables** from its parent — key-value pairs like `HOME=/home/user` or `PATH=/usr/bin:/usr/local/bin`. These are how processes receive configuration without command-line arguments.
+
+`getenv()` reads them, `setenv()` modifies them (only for the current process and its future children):
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    // Read environment variables
+    const char *path = getenv("PATH");
+    const char *home = getenv("HOME");
+    const char *user = getenv("USER");
+
+    printf("HOME: %s\\n", home ? home : "(not set)");
+    printf("USER: %s\\n", user ? user : "(not set)");
+    printf("PATH: %.60s...\\n", path ? path : "(not set)");
+
+    // Set an environment variable (for this process only)
+    setenv("MY_VAR", "hello", 1);  // 1 = overwrite if exists
+    printf("\\nMY_VAR: %s\\n", getenv("MY_VAR"));
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## The exit() Function
+
+When a process ends, the kernel needs to clean up its resources — close open files, free memory, notify the parent. The `exit()` function does this gracefully: it calls registered cleanup handlers (via `atexit()`), flushes stdio buffers, and then makes the `_exit()` system call to actually terminate the process.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+void cleanup(void) {
+    printf("Cleanup function called!\\n");
+}
+
+int main() {
+    // Register cleanup function
+    atexit(cleanup);
+
+    printf("Program starting...\\n");
+
+    // exit() calls atexit handlers and flushes stdio
+    // _exit() or _Exit() exits immediately (no cleanup)
+
+    int status = 0;  // 0 = success, non-zero = error
+    printf("Exiting with status %d\\n", status);
+
+    // exit(status);  // Would call cleanup and exit
+    // Instead, returning from main does the same thing
+    return status;
+}
+`} time="O(1)" space="O(1)" />
+
+The distinction between `exit()` and `_exit()` matters when you start using `fork()` — a child process that calls `exit()` might flush buffered output that the parent is also about to flush, causing duplicated output.
+
+## lseek — Random Access at the System Call Level
+
+You've used `fseek()` to jump around in files opened with `fopen()`. Under the hood, `fseek()` is a wrapper around the system call `lseek()`, which repositions the file offset on a raw file descriptor.
+
+Every open file descriptor has a **current offset** — the position where the next `read()` or `write()` will happen. `lseek()` lets you move that offset anywhere:
+
+```c
+#include <unistd.h>
+#include <fcntl.h>
+
+int fd = open("data.bin", O_RDONLY);
+
+lseek(fd, 0, SEEK_SET);    // jump to the beginning
+lseek(fd, 100, SEEK_SET);  // jump to byte 100
+lseek(fd, 50, SEEK_CUR);   // move 50 bytes forward from current position
+lseek(fd, -10, SEEK_CUR);  // move 10 bytes backward from current position
+lseek(fd, 0, SEEK_END);    // jump to end of file (useful for finding file size)
+
+off_t size = lseek(fd, 0, SEEK_END);  // returns the new offset = file size
+```
+
+The three whence values — `SEEK_SET` (absolute), `SEEK_CUR` (relative to current), `SEEK_END` (relative to end) — work identically to the constants in `fseek()`. The key difference: `fseek` operates on buffered `FILE*` streams and must reconcile the buffer with the actual file position. `lseek` operates directly on the kernel's file offset with no buffering overhead, making it the right choice when you're already using `open()`/`read()`/`write()` for unbuffered I/O.
+
+## Exercise: Error Code Lookup
+
+<Exercise
+  title="Error decoder"
+  description="Read N error numbers. For each, print the corresponding error message using strerror()."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        int err;
+        scanf("%d", &err);
+        printf("%d: %s\\n", err, strerror(err));
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 2 3", expected_stdout: "1: Operation not permitted\n2: No such file or directory\n3: No such process\n" },
+    { stdin: "2\n13 22", expected_stdout: "13: Permission denied\n22: Invalid argument\n" }
+  ]}
+  hints={[
+    "strerror() converts an errno value to a human-readable string.",
+    "Error number 1 is EPERM, 2 is ENOENT, 3 is ESRCH.",
+    "The exact messages may vary by platform."
+  ]}
+/>
+
+## Exercise: Environment Parser
+
+<Exercise
+  title="Parse KEY=VALUE pairs"
+  description="Read N lines, each in KEY=VALUE format (like environment variables). For each, print the key and value on separate lines as 'Key: KEY' and 'Value: VALUE'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    getchar(); // consume newline
+
+    for (int i = 0; i < n; i++) {
+        char line[256];
+        fgets(line, sizeof(line), stdin);
+
+        // Remove trailing newline
+        line[strcspn(line, "\\n")] = '\\0';
+
+        // Find the '=' separator
+        char *eq = strchr(line, '=');
+        if (eq != NULL) {
+            *eq = '\\0';  // Split the string
+            printf("Key: %s\\n", line);
+            printf("Value: %s\\n", eq + 1);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "2\nHOME=/home/user\nPATH=/usr/bin", expected_stdout: "Key: HOME\nValue: /home/user\nKey: PATH\nValue: /usr/bin\n" },
+    { stdin: "1\nLANG=en_US.UTF-8", expected_stdout: "Key: LANG\nValue: en_US.UTF-8\n" }
+  ]}
+  hints={[
+    "Use strchr() to find the '=' character.",
+    "Replace '=' with '\\0' to split into two strings.",
+    "The key is the start of the line, the value is everything after '='."
+  ]}
+/>
+
+## What's Next
+
+Now let's learn about **processes** — how to create child processes with `fork()` and execute programs with `exec()`.

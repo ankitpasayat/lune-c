@@ -1,0 +1,119 @@
+---
+title: "Command-Line Arguments"
+module: "Arrays and Strings"
+order: 5
+description: "Passing data to your program at launch with argc and argv."
+difficulty: "intermediate"
+---
+
+So far, our programs get input from `scanf` or `fgets` during execution. But you can also pass data to a program when you launch it — these are **command-line arguments**.
+
+## argc and argv
+
+The `main` function can take two parameters:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main(int argc, char *argv[]) {\n    printf("Number of arguments: %d\\n", argc);\n    \n    for (int i = 0; i < argc; i++) {\n        printf("argv[%d] = %s\\n", i, argv[i]);\n    }\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+- **`argc`** (argument count) — the number of arguments, including the program name
+- **`argv`** (argument vector) — an array of strings (char pointers), one per argument
+
+When you run `./program hello world`, you get:
+```
+argc = 3
+argv[0] = "./program"
+argv[1] = "hello"
+argv[2] = "world"
+```
+
+<Callout type="info">
+`argv[0]` is always the program name (or the path used to invoke it). The actual user arguments start at `argv[1]`. So a program with "no arguments" still has `argc == 1`.
+</Callout>
+
+## Using Arguments
+
+A common pattern is to check `argc` and use arguments:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdlib.h>\n\nint main(int argc, char *argv[]) {\n    if (argc != 3) {\n        printf("Usage: %s <num1> <num2>\\n", argv[0]);\n        return 1;\n    }\n    \n    // Convert string arguments to integers\n    int a = atoi(argv[1]);\n    int b = atoi(argv[2]);\n    \n    printf("%d + %d = %d\\n", a, b, a + b);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Converting Arguments
+
+Arguments are always strings. To use them as numbers, you need to convert:
+
+| Function | Converts to | Header |
+|----------|------------|--------|
+| `atoi(str)` | `int` | `<stdlib.h>` |
+| `atol(str)` | `long` | `<stdlib.h>` |
+| `atof(str)` | `double` | `<stdlib.h>` |
+| `strtol(str, NULL, 10)` | `long` (with error checking) | `<stdlib.h>` |
+
+<Callout type="tip">
+`atoi` silently returns 0 on invalid input. For production code, prefer `strtol` which provides error checking. For learning exercises, `atoi` is fine.
+</Callout>
+
+## How argv Works in Memory
+
+`argv` is an array of pointers. Each pointer points to a null-terminated string:
+
+```
+argv:  [ptr0] [ptr1] [ptr2] [NULL]
+         |      |      |
+         v      v      v
+       "./prog" "hello" "world"
+```
+
+The last element `argv[argc]` is guaranteed to be `NULL`.
+
+## Exercise: Echo Arguments
+
+<Exercise
+  title="Print all arguments"
+  description="Print each command-line argument (excluding the program name) on a separate line. Since we can't pass CLI args in the sandbox, read the arguments from stdin instead: first read N (number of args), then read N words."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    char arg[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%99s", arg);\n        // Print each argument on its own line\n    }\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3\nhello world foo", expected_stdout: "hello\nworld\nfoo\n" },
+    { stdin: "1\ntest", expected_stdout: "test\n" },
+    { stdin: "0", expected_stdout: "" }
+  ]}
+  hints={[
+    "Just print each argument after reading it: printf(\"%s\\n\", arg);",
+    "The loop handles reading and printing — you just need the printf inside it."
+  ]}
+/>
+
+## Exercise: Sum of Arguments
+
+<Exercise
+  title="Sum numeric arguments"
+  description="Read N, then N integers (simulating command-line arguments). Print their sum."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int sum = 0;\n    for (int i = 0; i < n; i++) {\n        int val;\n        scanf("%d", &val);\n        sum += val;\n    }\n    \n    // Print the sum\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3\n10 20 30", expected_stdout: "60\n" },
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "15\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "The loop already reads and sums the values. You just need to print the result.",
+    "printf(\"%d\\n\", sum);"
+  ]}
+/>
+
+## Exercise: Find Longest Word
+
+<Exercise
+  title="Longest word"
+  description="Read N words. Print the longest word. If there's a tie, print the first one."
+  starterCode={`#include <stdio.h>\n#include <string.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    char longest[100] = "";\n    \n    for (int i = 0; i < n; i++) {\n        char word[100];\n        scanf("%99s", word);\n        \n        // Update longest if this word is longer\n    }\n    \n    printf("%s\\n", longest);\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "4\nhi hello hey howdy", expected_stdout: "hello\n" },
+    { stdin: "3\ncat dog rat", expected_stdout: "cat\n" },
+    { stdin: "1\nonly", expected_stdout: "only\n" }
+  ]}
+  hints={[
+    "Compare strlen(word) > strlen(longest) to decide whether to update.",
+    "Use strcpy(longest, word) to copy the new longest word."
+  ]}
+/>
+
+## What's Next
+
+You've completed the Arrays and Strings module! You can now work with collections of data and text in C. Next up: **Pointers and Memory** — the most important (and most feared) topic in C.

@@ -1,0 +1,391 @@
+---
+title: "Function Pointers"
+module: "Performance & Advanced C"
+order: 2
+description: "Master function pointers for callbacks, dispatch tables, and runtime polymorphism in C."
+difficulty: "advanced"
+---
+
+C has no classes, no interfaces, no generics. And yet the Linux kernel — millions of lines of C — supports hundreds of file systems, network protocols, and device drivers, all with different behaviors, all working through the same API. How?
+
+The answer is function pointers. They're C's mechanism for **runtime polymorphism**: the ability to decide *which code runs* at runtime rather than compile time. Every time you call `qsort` with a custom comparator, or register a signal handler, or write a plugin, you're using this pattern. Function pointers are how C achieves what other languages do with interfaces, virtual methods, and first-class functions.
+
+## Function Pointer Syntax
+
+A function pointer stores the memory address of a function. The syntax looks strange at first — `int (*op)(int, int)` — but it follows C's declaration philosophy: "declaration mirrors use." You'd *call* it as `(*op)(3, 4)`, so you *declare* it as `int (*op)(int, int)`. In practice, C also lets you call it as `op(3, 4)` directly, which is what most code does.
+
+The key insight: because `op` is just a variable holding an address, you can reassign it at runtime. The *same* call site `op(3, 4)` can execute different functions depending on what `op` points to. This is runtime dispatch — choosing behavior at runtime.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// A function pointer stores the address of a function
+
+int add(int a, int b) { return a + b; }
+int sub(int a, int b) { return a - b; }
+int mul(int a, int b) { return a * b; }
+
+int main() {
+    // Declare a function pointer
+    // int (*name)(int, int) — pointer to function taking 2 ints, returning int
+    int (*op)(int, int);
+
+    // Assign and call
+    op = add;
+    printf("add(3, 4) = %d\\n", op(3, 4));
+
+    op = sub;
+    printf("sub(10, 3) = %d\\n", op(10, 3));
+
+    op = mul;
+    printf("mul(5, 6) = %d\\n", op(5, 6));
+
+    // Array of function pointers
+    int (*ops[])(int, int) = { add, sub, mul };
+    const char *names[] = { "add", "sub", "mul" };
+
+    printf("\\nUsing function pointer array:\\n");
+    for (int i = 0; i < 3; i++) {
+        printf("  %s(7, 3) = %d\\n", names[i], ops[i](7, 3));
+    }
+
+    return 0;
+}
+`} />
+
+## Typedef for Readability
+
+Raw function pointer syntax gets unreadable fast, especially with complex signatures. `typedef` gives you a clean name. This isn't just cosmetic — it makes your APIs clearer and catches type mismatches at compile time.
+
+Notice the pattern in the example below: a `process` function accepts *behavior as a parameter*. It doesn't know or care which operation or logger it gets. This is the core of the **callback pattern** — you write generic logic and let the caller inject specific behavior.
+
+## Reading Complex Declarations
+
+As function pointers, arrays, and pointers combine, C declarations can become difficult to read. Consider:
+
+```c
+int (*fp)(int, int);           // Pointer to function taking 2 ints, returning int
+int *(*fp)(int);               // Pointer to function taking int, returning int*
+int (*arr[5])(int);            // Array of 5 function pointers, each taking int, returning int
+int (*(*fp)(int))[10];         // Pointer to function taking int, returning pointer to array of 10 ints
+```
+
+The **right-left rule** helps you decode these: start at the variable name, go right until you hit `)`, then go left, then repeat one level out. For `int (*fp)(int, int)`: start at `fp`, go left and see `*` ("fp is a pointer"), go back right and see `(int, int)` ("to a function taking two ints"), then go left and see `int` ("returning int").
+
+In practice, `typedef` solves most readability problems. But when you encounter a complex declaration in legacy code or a library header, the right-left rule will save you.
+
+<Callout type="tip">
+If a declaration is hard to read, it's hard to maintain. Use `typedef` to name each layer: `typedef int (*Comparator)(const void*, const void*);` is clearer than repeating the raw syntax everywhere.
+</Callout>
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Without typedef:
+//   int (*operation)(int, int);  // Hard to read
+//
+// With typedef:
+//   typedef int (*Operation)(int, int);
+//   Operation op;  // Much clearer
+
+typedef int (*Operation)(int, int);
+typedef void (*Callback)(const char *);
+
+int add(int a, int b) { return a + b; }
+int multiply(int a, int b) { return a * b; }
+
+void log_msg(const char *msg) { printf("[LOG] %s\\n", msg); }
+void err_msg(const char *msg) { printf("[ERR] %s\\n", msg); }
+
+// Function that takes a callback
+void process(int a, int b, Operation op, Callback logger) {
+    int result = op(a, b);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Result: %d", result);
+    logger(buf);
+}
+
+int main() {
+    printf("=== Typedef with Function Pointers ===\\n\\n");
+
+    process(10, 20, add, log_msg);
+    process(5, 6, multiply, err_msg);
+
+    return 0;
+}
+`} />
+
+## Callbacks: qsort as the Canonical Example
+
+`qsort` is the most important function pointer example in all of C. It sorts *any* array of *any* type — but it was written decades before generics existed in any mainstream language. How?
+
+The trick: `qsort` doesn't know what it's sorting. It receives `void*` pointers (erasing the type) and a **comparator callback** — a function pointer that knows how to compare two elements. `qsort` handles the sorting algorithm; your callback handles the meaning.
+
+This is C's answer to generic programming: erase the type with `void*`, pass behavior as a function pointer. It's not as type-safe as C++ templates or Rust generics, but it works, it's flexible, and it's been powering C code since the 1970s.
+
+The comparator contract is simple: return negative if a < b, zero if equal, positive if a > b. By changing the comparator, the same `qsort` call sorts ascending, descending, by absolute value, by string length — anything you want.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+// qsort uses a callback for comparison
+// Signature: int (*compar)(const void *, const void *)
+
+int compare_asc(const void *a, const void *b) {
+    return *(const int*)a - *(const int*)b;
+}
+
+int compare_desc(const void *a, const void *b) {
+    return *(const int*)b - *(const int*)a;
+}
+
+int compare_by_abs(const void *a, const void *b) {
+    int va = abs(*(const int*)a);
+    int vb = abs(*(const int*)b);
+    return va - vb;
+}
+
+void print_array(const int *arr, int n, const char *label) {
+    printf("%-20s", label);
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+}
+
+int main() {
+    int data[] = {-3, 1, -7, 4, 2, -5, 8};
+    int n = 7;
+    int copy[7];
+
+    printf("=== qsort with Different Comparators ===\\n\\n");
+    print_array(data, n, "Original:");
+
+    // Sort ascending
+    for (int i = 0; i < n; i++) copy[i] = data[i];
+    qsort(copy, n, sizeof(int), compare_asc);
+    print_array(copy, n, "Ascending:");
+
+    // Sort descending
+    for (int i = 0; i < n; i++) copy[i] = data[i];
+    qsort(copy, n, sizeof(int), compare_desc);
+    print_array(copy, n, "Descending:");
+
+    // Sort by absolute value
+    for (int i = 0; i < n; i++) copy[i] = data[i];
+    qsort(copy, n, sizeof(int), compare_by_abs);
+    print_array(copy, n, "By absolute value:");
+
+    return 0;
+}
+`} />
+
+## Dispatch Tables and the vtable Pattern
+
+When you group related function pointers into a struct, you get a **vtable** (virtual function table) — the exact mechanism C++ uses behind the scenes for virtual methods.
+
+The idea: define a struct of function pointers that describes an *interface*. Each "implementation" provides its own set of functions. Any code that receives a pointer to this struct can call the functions without knowing which implementation it's using.
+
+This is how the Linux kernel works. `struct file_operations` contains function pointers for `read`, `write`, `open`, `close`, and others. Every file system (ext4, btrfs, NFS) fills in its own versions. The VFS (Virtual File System) layer calls through these pointers without knowing which file system is underneath. When you `open()` a file, the kernel looks up the right vtable and dispatches your call. Thousands of different file systems, one uniform interface, zero inheritance.
+
+This pattern — struct of callbacks — is also how you build **plugin architectures** in C. A plugin is just a shared library that fills in a vtable and registers it.
+
+**The cost:** indirect calls through function pointers prevent the compiler from inlining. The CPU also can't predict the branch target as easily. For hot inner loops, this can matter. But for architectural dispatch (choosing a strategy, routing to a subsystem), the clarity and extensibility is well worth it.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <math.h>
+
+// Simulate OOP with function pointers — like a vtable
+
+typedef struct Shape Shape;
+
+typedef struct {
+    double (*area)(const Shape*);
+    double (*perimeter)(const Shape*);
+    void (*print)(const Shape*);
+} ShapeVTable;
+
+struct Shape {
+    const ShapeVTable *vtable;
+    union {
+        struct { double radius; } circle;
+        struct { double width, height; } rect;
+        struct { double side; } square;
+    };
+};
+
+// Circle implementation
+double circle_area(const Shape *s) { return 3.14159265 * s->circle.radius * s->circle.radius; }
+double circle_perim(const Shape *s) { return 2 * 3.14159265 * s->circle.radius; }
+void circle_print(const Shape *s) { printf("Circle(r=%.1f)", s->circle.radius); }
+
+static const ShapeVTable circle_vtable = { circle_area, circle_perim, circle_print };
+
+// Rectangle implementation
+double rect_area(const Shape *s) { return s->rect.width * s->rect.height; }
+double rect_perim(const Shape *s) { return 2 * (s->rect.width + s->rect.height); }
+void rect_print(const Shape *s) { printf("Rect(%.1fx%.1f)", s->rect.width, s->rect.height); }
+
+static const ShapeVTable rect_vtable = { rect_area, rect_perim, rect_print };
+
+// "Constructors"
+Shape make_circle(double r) {
+    Shape s; s.vtable = &circle_vtable; s.circle.radius = r; return s;
+}
+
+Shape make_rect(double w, double h) {
+    Shape s; s.vtable = &rect_vtable; s.rect.width = w; s.rect.height = h; return s;
+}
+
+// Polymorphic function — works with any shape!
+void describe(const Shape *s) {
+    s->vtable->print(s);
+    printf(": area=%.2f, perimeter=%.2f\\n",
+           s->vtable->area(s), s->vtable->perimeter(s));
+}
+
+int main() {
+    Shape shapes[] = {
+        make_circle(5.0),
+        make_rect(4.0, 6.0),
+        make_circle(1.0),
+        make_rect(3.0, 3.0)
+    };
+    int n = 4;
+
+    printf("=== Polymorphism via Function Pointers ===\\n\\n");
+
+    for (int i = 0; i < n; i++) {
+        describe(&shapes[i]);
+    }
+
+    // Sort by area using qsort
+    printf("\\nTotal area: %.2f\\n",
+           shapes[0].vtable->area(&shapes[0]) +
+           shapes[1].vtable->area(&shapes[1]) +
+           shapes[2].vtable->area(&shapes[2]) +
+           shapes[3].vtable->area(&shapes[3]));
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+This vtable pattern is exactly how C++ implements virtual functions, and how Linux kernel "interfaces" work (e.g., `struct file_operations`). Every file system provides its own `read`, `write`, `open` functions through a struct of function pointers.
+</Callout>
+
+## Exercise: Calculator with Function Pointers
+
+<Exercise
+  title="Function pointer calculator"
+  description="Read N operations. Each is 'OP a b' where OP is +, -, *, or /. Use a function pointer to select the correct operation and print the result (integer arithmetic). For division by zero, print 'error'."
+  starterCode={`#include <stdio.h>
+
+typedef int (*BinOp)(int, int);
+
+int op_add(int a, int b) { return a + b; }
+int op_sub(int a, int b) { return a - b; }
+int op_mul(int a, int b) { return a * b; }
+int op_div(int a, int b) { return a / b; }
+
+BinOp get_op(char c) {
+    switch (c) {
+        case '+': return op_add;
+        case '-': return op_sub;
+        case '*': return op_mul;
+        case '/': return op_div;
+        default:  return NULL;
+    }
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char op;
+        int a, b;
+        scanf(" %c %d %d", &op, &a, &b);
+
+        if (op == '/' && b == 0) {
+            printf("error\\n");
+            continue;
+        }
+
+        BinOp fn = get_op(op);
+        if (fn) {
+            printf("%d\\n", fn(a, b));
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n+ 3 4\n- 10 3\n* 5 6\n/ 15 3", expected_stdout: "7\n7\n30\n5\n" },
+    { stdin: "2\n/ 10 0\n+ 1 1", expected_stdout: "error\n2\n" },
+    { stdin: "3\n* 0 100\n- 0 5\n+ -3 -4", expected_stdout: "0\n-5\n-7\n" }
+  ]}
+  hints={[
+    "Use a function to map operator char to function pointer.",
+    "Check for division by zero BEFORE calling the function.",
+    "All four operations have the same signature: int(int, int)."
+  ]}
+/>
+
+## Exercise: Custom Sorting
+
+<Exercise
+  title="Sort with comparator"
+  description="Read N integers and a sort mode: 'A' (ascending), 'D' (descending), or 'M' (by absolute value ascending). Sort and print the result space-separated."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int cmp_asc(const void *a, const void *b) {
+    return *(const int*)a - *(const int*)b;
+}
+int cmp_desc(const void *a, const void *b) {
+    return *(const int*)b - *(const int*)a;
+}
+int cmp_abs(const void *a, const void *b) {
+    int va = abs(*(const int*)a);
+    int vb = abs(*(const int*)b);
+    return va - vb;
+}
+
+int main() {
+    int n;
+    char mode;
+    scanf("%d %c", &n, &mode);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    int (*cmp)(const void*, const void*) = cmp_asc;
+    if (mode == 'D') cmp = cmp_desc;
+    else if (mode == 'M') cmp = cmp_abs;
+
+    qsort(arr, n, sizeof(int), cmp);
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 A\n3 1 4 1 5", expected_stdout: "1 1 3 4 5\n" },
+    { stdin: "5 D\n3 1 4 1 5", expected_stdout: "5 4 3 1 1\n" },
+    { stdin: "5 M\n-3 1 -7 4 2", expected_stdout: "1 2 -3 4 -7\n" },
+    { stdin: "3 A\n-5 0 5", expected_stdout: "-5 0 5\n" }
+  ]}
+  hints={[
+    "Select the comparator function pointer based on the mode character.",
+    "Pass it to qsort — same code, different behavior.",
+    "For abs mode, compare absolute values of the two elements."
+  ]}
+/>
+
+## What's Next
+
+Next: **SIMD and Vectorization** — using CPU vector instructions for parallel computation.

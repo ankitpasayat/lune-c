@@ -1,0 +1,155 @@
+---
+title: "Typedef and Enums"
+module: "Structs and Enums"
+order: 3
+description: "Creating type aliases with typedef and named constants with enum."
+difficulty: "intermediate"
+---
+
+By now you've typed `struct Point` and `struct Student` dozens of times. Every declaration, every function parameter, every local variable — always the `struct` keyword in front. In C++ this was quietly dropped: you can just write `Point` after defining `struct Point`. In C, you can't — unless you use `typedef`.
+
+But `typedef` isn't just about saving keystrokes. It's about **communicating intent**. When you write `typedef unsigned char byte`, you're telling every reader: "this isn't just some unsigned char — it's a byte of raw data." When you write `typedef struct Node Node`, you're saying "we use this type so often that it deserves a first-class name."
+
+## typedef Basics
+
+`typedef` creates a new name (an alias) for an existing type. The original type still exists — `typedef` doesn't invent new types, it gives friendlier names to existing ones:
+
+<Editor defaultCode={`#include <stdio.h>\n\n// Without typedef: must write "struct Point" everywhere\nstruct Point {\n    int x;\n    int y;\n};\n\n// With typedef: can just write "Vec2"\ntypedef struct {\n    int x;\n    int y;\n} Vec2;\n\nint main() {\n    struct Point p = {1, 2};  // Need "struct" keyword\n    Vec2 v = {3, 4};          // Just "Vec2" — cleaner\n    \n    printf("Point: (%d, %d)\\n", p.x, p.y);\n    printf("Vec2:  (%d, %d)\\n", v.x, v.y);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+You can also typedef basic types for clarity:
+
+```c
+typedef unsigned char byte;
+typedef long long i64;
+typedef unsigned int uint;
+
+byte data = 255;
+i64 big_number = 9999999999LL;
+```
+
+When should you typedef a primitive? When the new name carries **meaning** that the original doesn't. `byte` tells you "this is raw data, not a character." `i64` tells you "this needs to be at least 64 bits." But don't overdo it — `typedef int number` adds no information and just forces readers to look up your alias. The standard library's `size_t`, `ptrdiff_t`, and `uint32_t` are good examples of typedef done right: they document the role and portability constraints of the type.
+
+## typedef with Named Structs
+
+Here's a subtlety that trips people up. You often want *both* a struct tag *and* a typedef name, and you can do it in one declaration:
+
+```c
+typedef struct Node {
+    int value;
+    struct Node *next;  // Must use "struct Node" here
+} Node;
+
+// Now you can use:
+Node a;           // typedef name
+struct Node b;    // struct tag (both work)
+```
+
+Why keep the struct tag when you have the typedef? Because of self-referential pointers. Watch what happens inside the struct body:
+
+<Callout type="info">
+Inside the struct definition, the typedef name isn't available yet — the compiler hasn't finished processing the `typedef` statement. So self-referential pointers must use the struct tag: `struct Node *next`, not `Node *next`. This is why the pattern above gives the struct a tag (`struct Node`) AND a typedef (`Node`): the tag is needed inside, the typedef is used everywhere else.
+</Callout>
+
+This is a C-specific quirk. In C++, you'd just write `Node *next` inside the struct. In C, the compiler is more literal: "I don't know what `Node` means yet because I'm still in the middle of defining it."
+
+## Enums
+
+An integer `3` is meaningless without context. Is it a color? A direction? An error code? An `enum` turns magic numbers into names:
+
+<Editor defaultCode={`#include <stdio.h>\n\nenum Color {\n    RED,      // 0\n    GREEN,    // 1\n    BLUE,     // 2\n    YELLOW    // 3\n};\n\nenum Direction {\n    NORTH = 1,\n    SOUTH = 2,\n    EAST = 3,\n    WEST = 4\n};\n\nint main() {\n    enum Color c = BLUE;\n    printf("BLUE = %d\\n", c);\n    \n    enum Direction d = NORTH;\n    printf("NORTH = %d\\n", d);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+By default, enum values start at 0 and increment by 1. You can assign specific values, and subsequent unnamed values continue from there.
+
+You might wonder: "Why not just use `#define RED 0` and `#define GREEN 1`?" You can, and plenty of C code does. But enums have advantages:
+
+- **Debugging**: A debugger can show you `BLUE` instead of `2` — far more helpful when inspecting variables.
+- **Grouping**: All values in an `enum Color` are visually grouped in the code. Related `#define`s can be scattered across different headers.
+- **Compiler warnings**: Modern compilers can warn you if you forget a case in a `switch` over an enum. They can't do that with `#define`d integers.
+- **Scoped naming**: While C enums aren't scoped (unlike C++ `enum class`), they still signal to the reader "these constants belong together."
+
+The downside? Enum values in C are just ints — there's no type safety. `enum Color c = 42;` compiles without complaint. C++ fixes this with `enum class`, but in C, enums are syntactic sugar over integers. Still, the readability improvement alone makes them worth using.
+
+## Enums in Practice
+
+Here's the real power of enums: making `switch` statements self-documenting. Compare reading a switch on `0, 1, 2, 3` versus `STATUS_OK, STATUS_ERROR, STATUS_NOT_FOUND, STATUS_TIMEOUT`:
+
+<Editor defaultCode={`#include <stdio.h>\n\ntypedef enum {\n    STATUS_OK = 0,\n    STATUS_ERROR = 1,\n    STATUS_NOT_FOUND = 2,\n    STATUS_TIMEOUT = 3\n} Status;\n\nconst char *status_string(Status s) {\n    switch (s) {\n        case STATUS_OK:        return "OK";\n        case STATUS_ERROR:     return "Error";\n        case STATUS_NOT_FOUND: return "Not Found";\n        case STATUS_TIMEOUT:   return "Timeout";\n        default:               return "Unknown";\n    }\n}\n\nint main() {\n    Status result = STATUS_OK;\n    printf("Result: %s (%d)\\n", status_string(result), result);\n    \n    result = STATUS_NOT_FOUND;\n    printf("Result: %s (%d)\\n", status_string(result), result);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="tip">
+Enums are commonly used with `switch` statements. A good compiler will warn you if you forget a case in a switch over an enum — but only if you omit the `default` label. That's a deliberate tradeoff: include `default` for safety against future additions, or omit it to get the compiler's help catching missing cases.
+</Callout>
+
+This pattern — enum for states, switch for behavior — is the foundation of **state machines** in C. You'll use it to implement parsers, protocol handlers, game logic, and more.
+
+## Enum as Flags (Bit Patterns)
+
+Here's a clever trick that shows up constantly in systems programming. What if you need to represent *combinations* of values? A file might be readable AND writable. A message might be urgent AND encrypted. You can't do that with regular sequential enums (0, 1, 2, 3) because there's no way to combine them without ambiguity.
+
+The solution: assign each enum value a **power of 2** — meaning each value has exactly one bit set in its binary representation:
+
+- `READ = 1` is `001` in binary
+- `WRITE = 2` is `010` in binary
+- `EXECUTE = 4` is `100` in binary
+
+Now you can combine them with bitwise OR (`|`). `READ | WRITE` gives `011` — both the read bit and write bit are set. To check if a specific flag is set, use bitwise AND (`&`). `perms & READ` is nonzero only if the read bit is on.
+
+This works because each flag occupies its own independent bit — they never collide. Think of it like a row of light switches, where each switch controls a different permission.
+
+<Editor defaultCode={`#include <stdio.h>\n\ntypedef enum {\n    PERM_READ    = 1,  // 001\n    PERM_WRITE   = 2,  // 010\n    PERM_EXECUTE = 4   // 100\n} Permission;\n\nint main() {\n    // Combine with OR\n    int file_perms = PERM_READ | PERM_WRITE;\n    \n    // Check with AND\n    if (file_perms & PERM_READ)    printf("Can read\\n");\n    if (file_perms & PERM_WRITE)   printf("Can write\\n");\n    if (file_perms & PERM_EXECUTE) printf("Can execute\\n");\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+This is exactly how Unix file permissions work (`chmod 755`). The numbers 7, 5, 5 are sums of permission flags: 7 = 4+2+1 (read+write+execute), 5 = 4+1 (read+execute). The same bit-flag pattern appears in graphics APIs (OpenGL buffer flags), networking (socket options), and window systems (event masks).
+
+## Exercise: Day of Week
+
+<Exercise
+  title="Enum day name"
+  description="Read an integer (1-7). Print the day name (1=Monday, 7=Sunday). Use an enum and switch."
+  starterCode={`#include <stdio.h>\n\ntypedef enum {\n    MON = 1, TUE, WED, THU, FRI, SAT, SUN\n} Day;\n\nint main() {\n    int d;\n    scanf("%d", &d);\n    \n    // Use a switch on the day to print the name\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "1", expected_stdout: "Monday\n" },
+    { stdin: "5", expected_stdout: "Friday\n" },
+    { stdin: "7", expected_stdout: "Sunday\n" }
+  ]}
+  hints={[
+    "switch (d) { case MON: printf(\"Monday\\n\"); break; ... }",
+    "Since TUE = 2, WED = 3 etc. automatically, you can match all seven days."
+  ]}
+/>
+
+## Exercise: Shape Area
+
+<Exercise
+  title="Enum shape type"
+  description="Read a shape type (1=circle, 2=rectangle) and its dimensions. For circle: read radius, print area (pi*r*r). For rectangle: read width and height, print area. Use 2 decimal places."
+  starterCode={`#include <stdio.h>\n\ntypedef enum { CIRCLE = 1, RECTANGLE = 2 } Shape;\n\nint main() {\n    int type;\n    scanf("%d", &type);\n    \n    double area = 0;\n    \n    // Read dimensions and calculate area based on type\n    \n    printf("%.2f\\n", area);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "1\n5", expected_stdout: "78.54\n" },
+    { stdin: "2\n4 6", expected_stdout: "24.00\n" },
+    { stdin: "1\n1", expected_stdout: "3.14\n" }
+  ]}
+  hints={[
+    "if (type == CIRCLE) { int r; scanf(\"%d\", &r); area = 3.14159 * r * r; }",
+    "else if (type == RECTANGLE) { int w, h; scanf(\"%d %d\", &w, &h); area = w * h; }"
+  ]}
+/>
+
+## Exercise: Typedef Practice
+
+<Exercise
+  title="Clean type aliases"
+  description="Define a typedef'd struct called Vec3 with float x, y, z. Read three floats, create a Vec3, and print its magnitude (sqrt(x*x + y*y + z*z)) with 2 decimal places."
+  starterCode={`#include <stdio.h>\n#include <math.h>\n\n// Define Vec3 typedef here\n\nint main() {\n    float x, y, z;\n    scanf("%f %f %f", &x, &y, &z);\n    \n    // Create Vec3 and print its magnitude\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3.0 4.0 0.0", expected_stdout: "5.00\n" },
+    { stdin: "1.0 1.0 1.0", expected_stdout: "1.73\n" },
+    { stdin: "0.0 0.0 0.0", expected_stdout: "0.00\n" }
+  ]}
+  hints={[
+    "typedef struct { float x, y, z; } Vec3;",
+    "Vec3 v = {x, y, z}; printf(\"%.2f\\n\", sqrtf(v.x*v.x + v.y*v.y + v.z*v.z));"
+  ]}
+/>
+
+## What's Next
+
+The last topic in this module: **unions and bitfields** — sharing memory between fields and packing data tightly.

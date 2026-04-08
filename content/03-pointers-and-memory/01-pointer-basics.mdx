@@ -1,0 +1,111 @@
+---
+title: "Pointer Basics"
+module: "Pointers and Memory"
+order: 1
+description: "What pointers are, the address-of and dereference operators, pointer types, and NULL."
+difficulty: "intermediate"
+---
+
+Pointers are often called the hardest concept in C. But they're really just variables that hold memory addresses. Once you understand that, everything clicks.
+
+## What Is a Pointer?
+
+Every variable in your program lives at a specific **memory address**. A pointer is a variable that stores such an address.
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int x = 42;\n    int *ptr = &x;  // ptr holds the address of x\n    \n    printf("Value of x:      %d\\n", x);\n    printf("Address of x:    %p\\n", (void *)&x);\n    printf("Value of ptr:    %p\\n", (void *)ptr);   // Same address\n    printf("Value at ptr:    %d\\n", *ptr);           // 42 (dereference)\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Two key operators:
+- **`&x`** (address-of) — gives the memory address of variable `x`
+- **`*ptr`** (dereference) — gives the value stored at the address `ptr` points to
+
+## Declaring Pointers
+
+A pointer variable is declared with `*` after the type:
+
+```c
+int *p;       // pointer to int
+char *c;      // pointer to char
+double *d;    // pointer to double
+float *f;     // pointer to float
+```
+
+<Callout type="info">
+The type matters. An `int *` knows it points to 4 bytes of data interpreted as an integer. A `char *` points to 1 byte interpreted as a character. The type tells the compiler how to interpret the memory and how far to move with pointer arithmetic.
+</Callout>
+
+## Modifying Through Pointers
+
+Since a pointer gives you access to a variable's memory location, you can modify the original variable through the pointer:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int a = 10;\n    int *p = &a;\n    \n    printf("Before: a = %d\\n", a);\n    \n    *p = 99;  // Modify a through the pointer\n    \n    printf("After:  a = %d\\n", a);  // 99!\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+This is how C simulates "pass by reference" — by passing the address of a variable to a function.
+
+## NULL Pointers
+
+A pointer that doesn't point to anything valid should be set to `NULL`:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int *p = NULL;\n    \n    if (p == NULL) {\n        printf("Pointer is NULL\\n");\n    }\n    \n    // Dereferencing NULL causes a crash (segmentation fault)\n    // *p = 5;  // DON'T DO THIS\n    \n    // Always check before dereferencing\n    if (p != NULL) {\n        printf("Value: %d\\n", *p);\n    } else {\n        printf("Cannot dereference NULL\\n");\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Dereferencing a NULL pointer causes a **segmentation fault** — your program crashes. Always initialize pointers to NULL and check before dereferencing.
+</Callout>
+
+## Pointer Size
+
+All pointers are the same size on a given system, regardless of what type they point to:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    printf("int *:    %zu bytes\\n", sizeof(int *));\n    printf("char *:   %zu bytes\\n", sizeof(char *));\n    printf("double *: %zu bytes\\n", sizeof(double *));\n    printf("void *:   %zu bytes\\n", sizeof(void *));\n    \n    // On a 64-bit system, all pointers are 8 bytes\n    // On a 32-bit system, all pointers are 4 bytes\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Exercise: Swap Two Variables
+
+<Exercise
+  title="Swap using pointers"
+  description="Read two integers. Swap them using a function that takes two int pointers. Print the swapped values."
+  starterCode={`#include <stdio.h>\n\nvoid swap(int *a, int *b) {\n    // Swap the values pointed to by a and b\n}\n\nint main() {\n    int x, y;\n    scanf("%d %d", &x, &y);\n    \n    swap(&x, &y);\n    \n    printf("%d %d\\n", x, y);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "10 20", expected_stdout: "20 10\n" },
+    { stdin: "5 5", expected_stdout: "5 5\n" },
+    { stdin: "-3 7", expected_stdout: "7 -3\n" }
+  ]}
+  hints={[
+    "Use a temporary variable: int temp = *a;",
+    "Then: *a = *b; *b = temp;"
+  ]}
+/>
+
+## Exercise: Pointer Tracing
+
+<Exercise
+  title="What does the code print?"
+  description="Trace the code mentally, then write a program that produces the same output. Given: int a = 5, b = 10; int *p = &a; *p = 20; p = &b; *p = *p + a; — Print the final values of a and b."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int a = 5, b = 10;\n    int *p = &a;\n    \n    *p = 20;         // What happens to a?\n    p = &b;          // p now points to b\n    *p = *p + a;     // What happens to b?\n    \n    printf("%d %d\\n", a, b);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "20 30\n" }
+  ]}
+  hints={[
+    "*p = 20 sets a to 20 (since p points to a).",
+    "Then p = &b makes p point to b. *p + a = 10 + 20 = 30. So b becomes 30."
+  ]}
+/>
+
+## Exercise: Minimum via Pointer
+
+<Exercise
+  title="Return pointer to minimum"
+  description="Read three integers. Write a function that takes three int pointers and returns a pointer to the smallest value. Print the minimum."
+  starterCode={`#include <stdio.h>\n\nint *min_ptr(int *a, int *b, int *c) {\n    // Return a pointer to the smallest value\n    return a; // Fix this\n}\n\nint main() {\n    int a, b, c;\n    scanf("%d %d %d", &a, &b, &c);\n    \n    int *smallest = min_ptr(&a, &b, &c);\n    printf("%d\\n", *smallest);\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5 2 8", expected_stdout: "2\n" },
+    { stdin: "1 1 1", expected_stdout: "1\n" },
+    { stdin: "-3 -7 -1", expected_stdout: "-7\n" }
+  ]}
+  hints={[
+    "Compare *a, *b, and *c. Return a pointer to whichever is smallest.",
+    "int *min = a; if (*b < *min) min = b; if (*c < *min) min = c; return min;"
+  ]}
+/>
+
+## What's Next
+
+Now that you understand basic pointers, let's explore **pointer arithmetic** — how pointers and arrays relate, and how to navigate memory.

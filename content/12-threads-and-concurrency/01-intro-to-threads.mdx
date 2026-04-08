@@ -1,0 +1,294 @@
+---
+title: "Introduction to Threads"
+module: "Threads & Concurrency"
+order: 1
+description: "POSIX threads (pthreads), creating and joining threads, and thread basics."
+difficulty: "advanced"
+---
+
+In the last module, you learned to run multiple programs simultaneously using `fork()`. But processes are heavyweight — each one gets its own separate memory space, and communicating between them requires pipes or shared memory. What if you want multiple tasks running concurrently *within* the same program, sharing the same data?
+
+That's what **threads** are for.
+
+## The Office Analogy
+
+Think of processes as **separate offices** in a building. Each office has its own furniture, filing cabinets, phone line, and staff. If Office A needs to share data with Office B, it has to send a memo through the mail system (pipes, sockets). Setting up a new office is expensive and slow.
+
+Threads are like **multiple workers in the same office**. They share the same desks, filing cabinets, and phone lines (memory, file descriptors). They can see each other's work instantly — no memo needed. Hiring a new worker (creating a thread) is much faster than setting up a whole new office (creating a process).
+
+| Feature | Process | Thread |
+|---------|---------|--------|
+| Memory | Separate address space | Shared address space |
+| Creation cost | High (copy memory) | Low (share memory) |
+| Communication | Pipes, sockets, shared memory | Direct (shared variables) |
+| Crash isolation | Independent | One thread crash kills all |
+
+This shared memory is both the advantage and the danger. Sharing is fast, but if two workers modify the same document simultaneously without coordination, you get chaos (data races). We'll tackle that in the next lesson.
+
+## Creating Threads with pthreads
+
+POSIX threads (`pthreads`) is the standard threading API on Unix systems. The core idea is simple: you give `pthread_create()` a function, and it starts running that function in a new thread — in parallel with your existing code.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+// Thread function — must take void* and return void*
+void *thread_func(void *arg) {
+    int id = *(int *)arg;
+    printf("Thread %d: Hello from thread!\\n", id);
+    printf("Thread %d: My thread ID is %lu\\n", id, (unsigned long)pthread_self());
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[3];
+    int ids[3] = {1, 2, 3};
+
+    // Create threads
+    for (int i = 0; i < 3; i++) {
+        int ret = pthread_create(&threads[i], NULL, thread_func, &ids[i]);
+        if (ret != 0) {
+            printf("Error creating thread %d\\n", i);
+            return 1;
+        }
+        printf("Main: Created thread %d\\n", i + 1);
+    }
+
+    // Wait for all threads to finish
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+        printf("Main: Thread %d joined\\n", i + 1);
+    }
+
+    printf("Main: All threads done!\\n");
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+Compile with `-pthread` flag: `gcc -pthread program.c -o program`. The pthreads library must be linked.
+</Callout>
+
+## Why void* for Everything?
+
+The thread function signature might look strange:
+
+```c
+void *thread_function(void *arg);
+```
+
+Why `void*`? Because pthreads is a **generic** API — it doesn't know or care what data your thread needs. `void*` is C's way of saying "a pointer to anything." You cast your actual data pointer to `void*` when passing it, and cast it back inside the thread function.
+
+The same applies to the return value: you can return any data via a `void*` pointer. This is a common C pattern for writing type-generic functions.
+
+## Passing Data to Threads
+
+Since you can only pass a single `void*`, the standard approach for multiple values is to create a struct and pass a pointer to it:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+#include <stdlib.h>
+
+typedef struct {
+    int id;
+    int start;
+    int end;
+    long result;
+} ThreadData;
+
+void *sum_range(void *arg) {
+    ThreadData *data = (ThreadData *)arg;
+    data->result = 0;
+
+    for (int i = data->start; i <= data->end; i++) {
+        data->result += i;
+    }
+
+    printf("Thread %d: sum(%d to %d) = %ld\\n",
+           data->id, data->start, data->end, data->result);
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[4];
+    ThreadData data[4];
+
+    // Split summing 1..100 across 4 threads
+    int chunk = 25;
+    for (int i = 0; i < 4; i++) {
+        data[i].id = i;
+        data[i].start = i * chunk + 1;
+        data[i].end = (i + 1) * chunk;
+    }
+
+    // Create threads
+    for (int i = 0; i < 4; i++) {
+        pthread_create(&threads[i], NULL, sum_range, &data[i]);
+    }
+
+    // Join and collect results
+    long total = 0;
+    for (int i = 0; i < 4; i++) {
+        pthread_join(threads[i], NULL);
+        total += data[i].result;
+    }
+
+    printf("\\nTotal sum: %ld\\n", total);
+    printf("Expected:  %ld\\n", (long)100 * 101 / 2);
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+A critical rule: the data you pass must **outlive the thread**. If you pass a pointer to a local variable and that variable goes out of scope before the thread reads it, the thread reads garbage. The `ThreadData data[4]` array above lives in `main`'s stack frame, which exists until `main` returns — safely after we join all threads.
+
+## Join: Waiting for Completion
+
+`pthread_join()` is the thread equivalent of `waitpid()` for processes. It blocks the calling thread until the target thread finishes. If you don't join (or detach) a thread, its resources leak — similar to how not calling `wait()` creates zombie processes.
+
+Join also gives you the thread's return value:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+#include <stdlib.h>
+
+void *compute(void *arg) {
+    int input = *(int *)arg;
+
+    // Allocate result on heap (NOT on stack — stack disappears!)
+    int *result = malloc(sizeof(int));
+    *result = input * input;
+
+    return result;  // Return via void*
+}
+
+int main() {
+    pthread_t thread;
+    int input = 7;
+
+    pthread_create(&thread, NULL, compute, &input);
+
+    void *ret;
+    pthread_join(thread, &ret);
+
+    int *result = (int *)ret;
+    printf("%d squared = %d\\n", input, *result);
+
+    free(result);  // Don't forget to free!
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Never return a pointer to a local variable from a thread function — the stack frame is destroyed when the thread exits. Use `malloc()` or pass a pointer to pre-allocated storage.
+</Callout>
+
+## Detached Threads
+
+Sometimes you don't care when a thread finishes and don't need its return value. A **detached** thread cleans up its own resources automatically when it exits — no join needed:
+
+```c
+pthread_t thread;
+pthread_create(&thread, NULL, func, NULL);
+pthread_detach(thread);  // Thread cleans up when done
+// No pthread_join needed
+```
+
+Or set the attribute before creation:
+
+```c
+pthread_attr_t attr;
+pthread_attr_init(&attr);
+pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+pthread_create(&thread, &attr, func, NULL);
+pthread_attr_destroy(&attr);
+```
+
+Detached threads are useful for "fire and forget" tasks like logging or background cleanup. But be careful — once detached, you have no way to synchronize with the thread or know when it finishes.
+
+## Exercise: Thread Simulation
+
+<Exercise
+  title="Parallel sum"
+  description="Read N numbers. Split them into two halves. Compute the sum of each half (simulating two threads), then print the total sum."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // "Thread 1": first half
+    int mid = n / 2;
+    long sum1 = 0;
+    for (int i = 0; i < mid; i++) {
+        sum1 += arr[i];
+    }
+
+    // "Thread 2": second half
+    long sum2 = 0;
+    for (int i = mid; i < n; i++) {
+        sum2 += arr[i];
+    }
+
+    printf("%ld\\n", sum1 + sum2);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n1 2 3 4 5 6", expected_stdout: "21\n" },
+    { stdin: "4\n10 20 30 40", expected_stdout: "100\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "5\n1 1 1 1 1", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "Split the array at the midpoint n/2.",
+    "Sum each half independently (like two threads would).",
+    "Add both partial sums for the total."
+  ]}
+/>
+
+## Exercise: Thread ID Assignment
+
+<Exercise
+  title="Thread ID assignment"
+  description="Read N (number of threads). For each thread 0 to N-1, print 'Thread T: processing items S to E' where each thread gets TOTAL/N items. Read TOTAL as the second input. Items are numbered 0 to TOTAL-1."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n, total;
+    scanf("%d %d", &n, &total);
+
+    int chunk = total / n;
+    int remainder = total % n;
+
+    int start = 0;
+    for (int t = 0; t < n; t++) {
+        int count = chunk + (t < remainder ? 1 : 0);
+        int end = start + count - 1;
+        printf("Thread %d: processing items %d to %d\\n", t, start, end);
+        start = end + 1;
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4 100", expected_stdout: "Thread 0: processing items 0 to 24\nThread 1: processing items 25 to 49\nThread 2: processing items 50 to 74\nThread 3: processing items 75 to 99\n" },
+    { stdin: "3 10", expected_stdout: "Thread 0: processing items 0 to 3\nThread 1: processing items 4 to 6\nThread 2: processing items 7 to 9\n" },
+    { stdin: "2 7", expected_stdout: "Thread 0: processing items 0 to 3\nThread 1: processing items 4 to 6\n" }
+  ]}
+  hints={[
+    "Divide total by n to get the base chunk size.",
+    "The remainder (total % n) extra items go to the first threads.",
+    "Thread t gets chunk + 1 items if t < remainder, otherwise chunk items."
+  ]}
+/>
+
+## What's Next
+
+Shared memory creates problems. Next: **mutexes and synchronization** — preventing data races when threads access shared data.

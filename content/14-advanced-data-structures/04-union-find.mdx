@@ -1,0 +1,370 @@
+---
+title: "Union-Find (Disjoint Sets)"
+module: "Advanced Data Structures"
+order: 4
+description: "The Union-Find data structure for tracking connected components and set membership."
+difficulty: "advanced"
+---
+
+Imagine a country with many small towns, each governing itself independently. Over time, towns form alliances — when two towns merge, they pick one mayor to represent the combined group. If you want to know whether two towns are in the same alliance, you just check: "Do they have the same mayor?" That's Union-Find in a nutshell. Every group has a **representative** (the root), and you can check group membership by comparing representatives.
+
+## The Problem
+
+You have N elements and need to support two operations efficiently:
+1. **Union**: merge two groups together
+2. **Find**: determine which group an element belongs to
+
+These seem trivially simple, but doing both in nearly constant time — that's the genius of Union-Find.
+
+**Where this comes up**: network connectivity ("are these two computers on the same network?"), Kruskal's minimum spanning tree algorithm, image segmentation (grouping adjacent pixels of similar color), equivalence classes in compilers, and detecting cycles in undirected graphs.
+
+## The Naive Approach: Trees Without Balance
+
+The basic idea is elegant: represent each group as a tree. Each element points to its parent. The root of the tree is the group's representative. Two elements are in the same group if and only if they have the same root.
+
+To **find** which group `x` belongs to, follow parent pointers up to the root.
+To **union** two groups, find both roots and make one point to the other.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define N 10
+
+int parent[N];
+
+void init(int n) {
+    for (int i = 0; i < n; i++) parent[i] = i;
+}
+
+// Find the root (representative) of x's set
+int find(int x) {
+    while (parent[x] != x) {
+        x = parent[x];
+    }
+    return x;
+}
+
+// Merge the sets containing x and y
+void unite(int x, int y) {
+    int rx = find(x);
+    int ry = find(y);
+    if (rx != ry) {
+        parent[rx] = ry;
+    }
+}
+
+int connected(int x, int y) {
+    return find(x) == find(y);
+}
+
+int main() {
+    init(7);
+
+    printf("Initial: each element is its own set\\n");
+
+    unite(0, 1); printf("Union(0,1)\\n");
+    unite(2, 3); printf("Union(2,3)\\n");
+    unite(0, 2); printf("Union(0,2) — merges {0,1} and {2,3}\\n");
+
+    printf("\\n0 and 3 connected? %s\\n", connected(0, 3) ? "yes" : "no");
+    printf("0 and 4 connected? %s\\n", connected(0, 4) ? "yes" : "no");
+    printf("4 and 5 connected? %s\\n", connected(4, 5) ? "yes" : "no");
+
+    unite(4, 5); printf("\\nUnion(4,5)\\n");
+    printf("4 and 5 connected? %s\\n", connected(4, 5) ? "yes" : "no");
+
+    return 0;
+}
+`} time="O(n) worst case" space="O(n)" />
+
+### Why This Is O(n)
+
+The problem with the naive approach is that trees can become **degenerate** — long chains. Imagine doing `union(0,1)`, `union(1,2)`, `union(2,3)`, ... in sequence. You get a chain: `0 -> 1 -> 2 -> 3 -> ... -> n-1`. Now `find(0)` has to walk the entire chain — O(n) steps. After `n` unions and `n` finds, you've done O(n^2) work total. That's no better than scanning an array.
+
+The tree is supposed to be shallow, but nothing in the naive algorithm prevents it from becoming a long, skinny vine. We need to keep the trees short.
+
+## The Fix: Two Brilliant Optimizations
+
+### Optimization 1: Union by Rank
+
+The idea is simple: when merging two trees, attach the **shorter** tree under the **taller** one. This prevents the tree from growing unnecessarily tall.
+
+We track an approximate height (called "rank") for each root. When two trees have different ranks, the shorter one goes under the taller one — the combined tree's height doesn't increase. Only when two trees of equal rank merge does the height grow by one. This guarantees the tree height is at most O(log n).
+
+Think back to the politician analogy: when two alliances merge, the *smaller* alliance joins the *larger* one — the smaller group adopts the larger group's mayor. This keeps power structures flat.
+
+### Optimization 2: Path Compression
+
+Here's the truly clever trick: every time you call `find(x)`, you walk from `x` up to the root. Path compression says: while you're at it, **make every node along the path point directly to the root**. Future finds on any of those nodes will be O(1).
+
+This doesn't break the data structure because all that matters is which root an element belongs to — the intermediate structure of the tree is irrelevant. By flattening the tree during finds, you amortize future operations to be nearly free.
+
+The first `find` on a long path might take O(log n), but it restructures the tree so that subsequent finds on the same elements take O(1). Over time, the tree converges toward a completely flat structure where every node points directly to the root.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define MAX_N 100
+
+int parent[MAX_N];
+int rank_arr[MAX_N];  // "rank" approximates tree height
+
+void init(int n) {
+    for (int i = 0; i < n; i++) {
+        parent[i] = i;
+        rank_arr[i] = 0;
+    }
+}
+
+// Find with PATH COMPRESSION
+// Makes all nodes on the path point directly to root
+int find(int x) {
+    if (parent[x] != x) {
+        parent[x] = find(parent[x]);  // Recursively flatten
+    }
+    return parent[x];
+}
+
+// Union by RANK
+// Attach shorter tree under taller tree
+void unite(int x, int y) {
+    int rx = find(x);
+    int ry = find(y);
+    if (rx == ry) return;
+
+    if (rank_arr[rx] < rank_arr[ry]) {
+        parent[rx] = ry;
+    } else if (rank_arr[rx] > rank_arr[ry]) {
+        parent[ry] = rx;
+    } else {
+        parent[ry] = rx;
+        rank_arr[rx]++;
+    }
+}
+
+int connected(int x, int y) {
+    return find(x) == find(y);
+}
+
+int count_sets(int n) {
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (find(i) == i) count++;
+    }
+    return count;
+}
+
+int main() {
+    int n = 8;
+    init(n);
+
+    printf("Start: %d sets\\n", count_sets(n));
+
+    unite(0, 1);
+    unite(2, 3);
+    unite(4, 5);
+    unite(6, 7);
+    printf("After 4 unions: %d sets\\n", count_sets(n));
+
+    unite(0, 2);
+    unite(4, 6);
+    printf("After 2 more: %d sets\\n", count_sets(n));
+
+    unite(0, 4);
+    printf("After final union: %d sets\\n", count_sets(n));
+
+    // All connected now
+    for (int i = 0; i < n; i++) {
+        printf("%d is in set with root %d\\n", i, find(i));
+    }
+
+    return 0;
+}
+`} time="O(α(n)) amortized" space="O(n)" />
+
+<Callout type="info">
+With both optimizations combined, the amortized time per operation is O(alpha(n)), where alpha is the **inverse Ackermann function**. The Ackermann function grows incomprehensibly fast — faster than exponential, faster than tower-of-powers. Its inverse, therefore, grows unimaginably slowly. For any input size that could physically exist in the universe (n up to 10^80, the estimated number of atoms), alpha(n) is at most 4. It's constant for all practical purposes, but proving that requires sophisticated mathematics — which is why this is considered one of the most elegant results in computer science.
+</Callout>
+
+## Application: Kruskal's Minimum Spanning Tree
+
+Kruskal's algorithm is the textbook application of Union-Find. The idea: sort all edges by weight, then greedily add the cheapest edge that doesn't create a cycle. How do you check if an edge creates a cycle? If both endpoints are already in the same connected component — i.e., `find(u) == find(v)` — adding the edge would create a cycle. Otherwise, add the edge and `union(u, v)`.
+
+Without Union-Find, cycle detection would require a full DFS/BFS per edge — O(V) per check, O(EV) total. With Union-Find, each check is near-O(1), making the total O(E log E) (dominated by the sorting step).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+#define MAX_N 100
+
+int parent[MAX_N], rnk[MAX_N];
+void init(int n) { for (int i = 0; i < n; i++) { parent[i] = i; rnk[i] = 0; } }
+int find(int x) { return parent[x] == x ? x : (parent[x] = find(parent[x])); }
+void unite(int x, int y) {
+    int rx = find(x), ry = find(y);
+    if (rx == ry) return;
+    if (rnk[rx] < rnk[ry]) parent[rx] = ry;
+    else if (rnk[rx] > rnk[ry]) parent[ry] = rx;
+    else { parent[ry] = rx; rnk[rx]++; }
+}
+
+typedef struct { int u, v, w; } Edge;
+
+int cmp(const void *a, const void *b) {
+    return ((Edge*)a)->w - ((Edge*)b)->w;
+}
+
+int main() {
+    int V = 6, E = 9;
+    Edge edges[] = {
+        {0,1,4}, {0,2,4}, {1,2,2}, {1,3,5}, {2,3,5},
+        {2,4,6}, {3,4,2}, {3,5,6}, {4,5,1}
+    };
+
+    qsort(edges, E, sizeof(Edge), cmp);
+    init(V);
+
+    printf("Kruskal's MST:\\n");
+    int total = 0, count = 0;
+
+    for (int i = 0; i < E && count < V - 1; i++) {
+        int u = edges[i].u, v = edges[i].v, w = edges[i].w;
+        if (find(u) != find(v)) {
+            unite(u, v);
+            printf("  Edge %d-%d (weight %d)\\n", u, v, w);
+            total += w;
+            count++;
+        }
+    }
+
+    printf("Total weight: %d\\n", total);
+
+    return 0;
+}
+`} time="O(E log E)" space="O(V + E)" />
+
+## Exercise: Dynamic Connectivity
+
+<Exercise
+  title="Union-Find operations"
+  description="Read N (number of elements, 0 to N-1) and Q queries. Each query is either 'U x y' (union x and y) or 'Q x y' (query if connected). For each Q query, print 'yes' or 'no'."
+  starterCode={`#include <stdio.h>
+
+#define MAX_N 1000
+
+int parent[MAX_N], rnk[MAX_N];
+
+void init(int n) {
+    for (int i = 0; i < n; i++) {
+        parent[i] = i;
+        rnk[i] = 0;
+    }
+}
+
+int find(int x) {
+    if (parent[x] != x) parent[x] = find(parent[x]);
+    return parent[x];
+}
+
+void unite(int x, int y) {
+    int rx = find(x), ry = find(y);
+    if (rx == ry) return;
+    if (rnk[rx] < rnk[ry]) parent[rx] = ry;
+    else if (rnk[rx] > rnk[ry]) parent[ry] = rx;
+    else { parent[ry] = rx; rnk[rx]++; }
+}
+
+int main() {
+    int n, q;
+    scanf("%d %d", &n, &q);
+    init(n);
+
+    for (int i = 0; i < q; i++) {
+        char op;
+        int x, y;
+        scanf(" %c %d %d", &op, &x, &y);
+
+        if (op == 'U') {
+            unite(x, y);
+        } else {
+            printf("%s\\n", find(x) == find(y) ? "yes" : "no");
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 6\nU 0 1\nU 2 3\nQ 0 1\nQ 0 2\nU 1 3\nQ 0 2", expected_stdout: "yes\nno\nyes\n" },
+    { stdin: "3 3\nQ 0 1\nU 0 1\nQ 0 1", expected_stdout: "no\nyes\n" },
+    { stdin: "4 5\nU 0 1\nU 1 2\nU 2 3\nQ 0 3\nQ 0 2", expected_stdout: "yes\nyes\n" }
+  ]}
+  hints={[
+    "Use Union-Find with path compression and union by rank.",
+    "Two elements are connected if they have the same root.",
+    "Union merges the sets containing x and y."
+  ]}
+/>
+
+## Exercise: Count Groups
+
+<Exercise
+  title="Number of groups"
+  description="Read N elements and M union operations (pairs of integers). After all unions, print how many distinct groups remain."
+  starterCode={`#include <stdio.h>
+
+#define MAX_N 1000
+
+int parent[MAX_N], rnk[MAX_N];
+
+void init(int n) {
+    for (int i = 0; i < n; i++) { parent[i] = i; rnk[i] = 0; }
+}
+
+int find(int x) {
+    if (parent[x] != x) parent[x] = find(parent[x]);
+    return parent[x];
+}
+
+void unite(int x, int y) {
+    int rx = find(x), ry = find(y);
+    if (rx == ry) return;
+    if (rnk[rx] < rnk[ry]) parent[rx] = ry;
+    else if (rnk[rx] > rnk[ry]) parent[ry] = rx;
+    else { parent[ry] = rx; rnk[rx]++; }
+}
+
+int main() {
+    int n, m;
+    scanf("%d %d", &n, &m);
+    init(n);
+
+    for (int i = 0; i < m; i++) {
+        int x, y;
+        scanf("%d %d", &x, &y);
+        unite(x, y);
+    }
+
+    int groups = 0;
+    for (int i = 0; i < n; i++) {
+        if (find(i) == i) groups++;
+    }
+    printf("%d\\n", groups);
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 3\n0 1\n1 2\n3 4", expected_stdout: "2\n" },
+    { stdin: "4 0", expected_stdout: "4\n" },
+    { stdin: "6 5\n0 1\n1 2\n2 3\n3 4\n4 5", expected_stdout: "1\n" },
+    { stdin: "3 1\n0 2", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "After all unions, count elements where find(i) == i.",
+    "These are the roots — each root represents one group.",
+    "With no unions, each element is its own group (N groups)."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next up: **Real Programs** — building complete applications like a shell, a text editor, and a memory allocator.

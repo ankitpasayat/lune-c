@@ -1,0 +1,186 @@
+---
+title: "Conditionals"
+module: "C Fundamentals"
+order: 5
+description: "Making decisions with if/else, switch, the ternary operator, and how C handles truth values."
+difficulty: "beginner"
+---
+
+Programs need to make decisions. In C, you control the flow of execution with `if`, `else`, `switch`, and the ternary operator.
+
+## if and else
+
+The basic conditional:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int temperature = 35;\n    \n    if (temperature > 30) {\n        printf("It's hot!\\n");\n    } else if (temperature > 20) {\n        printf("It's nice.\\n");\n    } else if (temperature > 10) {\n        printf("It's cool.\\n");\n    } else {\n        printf("It's cold!\\n");\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Key rules:
+- The condition must be in parentheses: `if (condition)`
+- Curly braces `{}` define the block of code to execute
+- `else if` chains let you check multiple conditions
+- `else` catches everything that didn't match above
+
+## Comparison Operators
+
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `==` | Equal to | `x == 5` |
+| `!=` | Not equal to | `x != 0` |
+| `<` | Less than | `x < 10` |
+| `>` | Greater than | `x > 0` |
+| `<=` | Less than or equal | `x <= 100` |
+| `>=` | Greater than or equal | `x >= 1` |
+
+<Callout type="warning">
+**`=` vs `==`**: This is the #1 bug in C. `=` is *assignment*, `==` is *comparison*. Writing `if (x = 5)` doesn't check if x is 5 — it *sets* x to 5 and always evaluates to true. The compiler may warn about this, but it's valid C.
+</Callout>
+
+## Logical Operators
+
+Combine conditions with logical operators:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int age = 25;\n    int has_license = 1;  // 1 = true, 0 = false\n    \n    if (age >= 18 && has_license) {\n        printf("Can drive\\n");\n    }\n    \n    if (age < 13 || age > 65) {\n        printf("Discount available\\n");\n    } else {\n        printf("Full price\\n");\n    }\n    \n    if (!has_license) {\n        printf("No license\\n");\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+| Operator | Meaning | Usage |
+|----------|---------|-------|
+| `&&` | AND | Both must be true |
+| `\|\|` | OR | At least one must be true |
+| `!` | NOT | Inverts true/false |
+
+<Callout type="info">
+C uses **short-circuit evaluation**: in `a && b`, if `a` is false, `b` is never evaluated. In `a || b`, if `a` is true, `b` is never evaluated. This matters when `b` has side effects, like a function call.
+</Callout>
+
+## Truth in C
+
+C has no `bool` type in traditional C (C99 added `_Bool` and `stdbool.h`). Instead:
+- **0** is false
+- **Any non-zero value** is true
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    if (1) printf("1 is true\\n");\n    if (-1) printf("-1 is true\\n");\n    if (42) printf("42 is true\\n");\n    if (0) printf("0 is true\\n");  // This won't print\n    \n    // Common pattern: check if something is non-zero\n    int count = 5;\n    if (count) {\n        printf("count is non-zero: %d\\n", count);\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## The Ternary Operator
+
+A compact one-line conditional: `condition ? value_if_true : value_if_false`
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int x = 7;\n    \n    // Instead of:\n    // if (x > 0) printf("positive"); else printf("non-positive");\n    \n    printf("%s\\n", x > 0 ? "positive" : "non-positive");\n    \n    // Useful for assignments:\n    int abs_x = x < 0 ? -x : x;\n    printf("Absolute value: %d\\n", abs_x);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## switch Statements
+
+When checking one variable against multiple values, `switch` is cleaner than long if-else chains:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int day = 3;\n    \n    switch (day) {\n        case 1:\n            printf("Monday\\n");\n            break;\n        case 2:\n            printf("Tuesday\\n");\n            break;\n        case 3:\n            printf("Wednesday\\n");\n            break;\n        case 4:\n            printf("Thursday\\n");\n            break;\n        case 5:\n            printf("Friday\\n");\n            break;\n        default:\n            printf("Weekend\\n");\n            break;\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+**Don't forget `break`!** Without it, execution "falls through" to the next case. This is intentional in C (sometimes useful), but usually a bug. The `default` case catches values that don't match any `case`.
+</Callout>
+
+## The goto Statement
+
+C has a `goto` statement that jumps to a labeled line. It's widely considered harmful for general control flow — it makes code hard to follow. But it has one legitimate and common use case in C: **error cleanup**.
+
+When a function acquires multiple resources (files, memory, locks), and something fails partway through, `goto` provides a clean way to unwind:
+
+```c
+int process_file(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) goto err_open;
+    
+    char *buf = malloc(1024);
+    if (!buf) goto err_malloc;
+    
+    // ... do work with f and buf ...
+    
+    free(buf);
+    fclose(f);
+    return 0;
+
+err_malloc:
+    fclose(f);
+err_open:
+    return -1;
+}
+```
+
+The Linux kernel uses this pattern extensively. The labels are ordered so that jumping to an earlier error label cleans up only the resources acquired so far. Without `goto`, you'd need deeply nested `if` statements or repeated cleanup code.
+
+<Callout type="info">
+Outside of error cleanup, avoid `goto`. Use loops, functions, and `break`/`continue` instead. But when you see `goto cleanup` in systems code, now you know why it's there.
+</Callout>
+
+## Exercise: Grade Calculator
+
+<Exercise
+  title="Letter grade"
+  description="Read an integer score (0-100) from stdin. Print the letter grade: A (90-100), B (80-89), C (70-79), D (60-69), F (below 60)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int score;\n    scanf("%d", &score);\n    \n    // Print the letter grade\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "95", expected_stdout: "A\n" },
+    { stdin: "85", expected_stdout: "B\n" },
+    { stdin: "72", expected_stdout: "C\n" },
+    { stdin: "60", expected_stdout: "D\n" },
+    { stdin: "45", expected_stdout: "F\n" },
+    { stdin: "100", expected_stdout: "A\n" }
+  ]}
+  hints={[
+    "Use if/else if/else chain, starting from the highest grade.",
+    "if (score >= 90) ... else if (score >= 80) ... and so on."
+  ]}
+/>
+
+## Exercise: Leap Year
+
+<Exercise
+  title="Leap year check"
+  description="Read a year from stdin. Print 'leap' if it's a leap year, 'not leap' otherwise. A year is a leap year if: divisible by 4 AND (not divisible by 100 OR divisible by 400)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int year;\n    scanf("%d", &year);\n    \n    // Check if leap year and print result\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "2024", expected_stdout: "leap\n" },
+    { stdin: "1900", expected_stdout: "not leap\n" },
+    { stdin: "2000", expected_stdout: "leap\n" },
+    { stdin: "2023", expected_stdout: "not leap\n" }
+  ]}
+  hints={[
+    "A leap year is divisible by 4.",
+    "But NOT if it's divisible by 100... unless it's also divisible by 400.",
+    "if (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0))"
+  ]}
+/>
+
+## Exercise: Number Sign
+
+<Exercise
+  title="Positive, negative, or zero"
+  description="Read an integer from stdin. Print 'positive', 'negative', or 'zero'."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    // Determine and print the sign\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "42", expected_stdout: "positive\n" },
+    { stdin: "-7", expected_stdout: "negative\n" },
+    { stdin: "0", expected_stdout: "zero\n" }
+  ]}
+  hints={[
+    "Use if/else if/else to check the three cases.",
+    "Check for zero first or last — the order is up to you."
+  ]}
+/>
+
+## Exercise: Maximum of Three
+
+<Exercise
+  title="Find the largest"
+  description="Read three integers from stdin (each on a separate line). Print the largest of the three."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int a, b, c;\n    scanf("%d", &a);\n    scanf("%d", &b);\n    scanf("%d", &c);\n    \n    // Find and print the maximum\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3\n7\n5", expected_stdout: "7\n" },
+    { stdin: "10\n10\n10", expected_stdout: "10\n" },
+    { stdin: "-1\n-5\n-2", expected_stdout: "-1\n" }
+  ]}
+  hints={[
+    "Start by assuming a is the max. Then compare with b and c.",
+    "int max = a; if (b > max) max = b; if (c > max) max = c;"
+  ]}
+/>
+
+## What's Next
+
+You can now write programs that make decisions. Next up: **loops** — repeating actions with `for`, `while`, and `do-while`.

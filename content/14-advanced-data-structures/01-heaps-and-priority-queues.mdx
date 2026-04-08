@@ -1,0 +1,328 @@
+---
+title: "Heaps & Priority Queues"
+module: "Advanced Data Structures"
+order: 1
+description: "Binary heaps, heap operations, heapsort, and building a priority queue."
+difficulty: "intermediate"
+---
+
+Imagine an emergency room. Patients don't get treated in the order they arrive — the person having a heart attack goes before the person with a sprained ankle. You need a data structure where the most urgent item is always instantly accessible, but adding and removing items is still fast. That's a **priority queue**, and the best way to implement one is with a **heap**.
+
+## What Is a Binary Heap?
+
+A binary heap is a **complete binary tree** with one simple rule: every parent is smaller than its children (in a min-heap) or larger (in a max-heap). That's it — just one rule, and it gives us remarkable power.
+
+```
+Min-Heap:          Max-Heap:
+     1                  9
+    / \                / \
+   3   5              7   5
+  / \                / \
+ 7   9              3   1
+```
+
+**Key property**: the root is always the minimum (or maximum). You can peek at the highest-priority item in O(1) — just look at element zero.
+
+Notice what a heap does *not* guarantee: the left child isn't necessarily smaller than the right child, and siblings have no ordering between them. A heap is **not** a sorted array. It's a much weaker constraint, and that weakness is what makes it fast — we don't need to maintain full sort order, just the parent-child relationship.
+
+## Why an Array Works: The Geometry of Complete Binary Trees
+
+Here's the beautiful trick: a complete binary tree can be stored in a flat array with **zero pointers** and **zero wasted space**. No `left` and `right` pointer fields, no `malloc` per node — just a contiguous block of memory.
+
+This works because a complete binary tree fills level by level, left to right, with no gaps. If you number the nodes in that order (0, 1, 2, 3, ...), a remarkable pattern emerges:
+
+```
+Index:  0  1  2  3  4
+Value: [1, 3, 5, 7, 9]
+
+For element at index i:
+  Parent:      (i - 1) / 2
+  Left child:  2 * i + 1
+  Right child: 2 * i + 2
+```
+
+Why do these formulas work? Think of it level by level. Level 0 has 1 node (index 0). Level 1 has 2 nodes (indices 1-2). Level 2 has 4 nodes (indices 3-6). Each level has twice as many nodes as the previous one. When you go from a parent to its left child, you're jumping to the next level, which starts at roughly double the current index — hence `2*i + 1`. The right child is just the next slot over: `2*i + 2`. Going backward from child to parent reverses this: `(i - 1) / 2` (integer division naturally floors for both left and right children).
+
+This array representation is not just elegant — it's *fast*. Arrays have excellent cache locality: the elements sit next to each other in memory, so traversing parent-child relationships involves predictable memory access patterns that modern CPUs love. A pointer-based tree, by contrast, scatters nodes across the heap (the memory heap, ironically), causing cache misses on every pointer dereference.
+
+## The Two Core Operations: Trickle Up and Trickle Down
+
+Every heap operation boils down to two primitive moves:
+
+**Trickle up** (also called "sift up" or "bubble up"): an element is too small for its position — it needs to float upward. Compare with parent; if smaller, swap. Repeat until the heap property is restored or you reach the root.
+
+**Trickle down** (also called "sift down" or "bubble down"): an element is too large for its position — it needs to sink downward. Compare with both children; swap with the *smaller* child (to maintain the heap property). Repeat until the element settles or reaches a leaf.
+
+Think of it like a corporate hierarchy. Trickle up is a talented new hire getting promoted past mediocre managers. Trickle down is an incompetent executive being demoted as their more capable subordinates take over.
+
+**Insert** uses trickle up: place the new element at the end of the array (the next open leaf position), then let it float up to its correct level.
+
+**Extract-min** uses trickle down: remove the root (the minimum), move the last element to the root position, then let it sink down to where it belongs.
+
+### Why O(log n)?
+
+Both trickle up and trickle down traverse at most the height of the tree. A complete binary tree with `n` nodes has height `floor(log2(n))`. So every insert and extract operation is O(log n). For a million elements, that's at most 20 swaps. For a billion, 30 swaps. Logarithms are astonishingly generous.
+
+## Min-Heap Implementation
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define MAX_SIZE 100
+
+typedef struct {
+    int data[MAX_SIZE];
+    int size;
+} MinHeap;
+
+void swap(int *a, int *b) {
+    int t = *a; *a = *b; *b = t;
+}
+
+void heap_init(MinHeap *h) { h->size = 0; }
+
+// Bubble up: fix heap after insertion
+void sift_up(MinHeap *h, int i) {
+    while (i > 0) {
+        int parent = (i - 1) / 2;
+        if (h->data[i] < h->data[parent]) {
+            swap(&h->data[i], &h->data[parent]);
+            i = parent;
+        } else break;
+    }
+}
+
+// Bubble down: fix heap after removal
+void sift_down(MinHeap *h, int i) {
+    while (2 * i + 1 < h->size) {
+        int left = 2 * i + 1;
+        int right = 2 * i + 2;
+        int smallest = i;
+
+        if (left < h->size && h->data[left] < h->data[smallest])
+            smallest = left;
+        if (right < h->size && h->data[right] < h->data[smallest])
+            smallest = right;
+
+        if (smallest != i) {
+            swap(&h->data[i], &h->data[smallest]);
+            i = smallest;
+        } else break;
+    }
+}
+
+void heap_push(MinHeap *h, int value) {
+    h->data[h->size] = value;
+    sift_up(h, h->size);
+    h->size++;
+}
+
+int heap_pop(MinHeap *h) {
+    int min = h->data[0];
+    h->data[0] = h->data[--h->size];
+    sift_down(h, 0);
+    return min;
+}
+
+int main() {
+    MinHeap heap;
+    heap_init(&heap);
+
+    int values[] = {5, 3, 8, 1, 9, 2, 7};
+    for (int i = 0; i < 7; i++) {
+        heap_push(&heap, values[i]);
+        printf("Pushed %d, min is %d\\n", values[i], heap.data[0]);
+    }
+
+    printf("\\nPopping in sorted order:\\n");
+    while (heap.size > 0) {
+        printf("%d ", heap_pop(&heap));
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(log n)" space="O(n)" />
+
+<Complexity time="O(log n) push/pop" space="O(n)" />
+
+## Heapsort and the O(n) Build Trick
+
+Heapsort works in two phases: build a max-heap from the array, then repeatedly extract the maximum and place it at the end. It's an elegant in-place, O(n log n) sort with no extra memory.
+
+But there's a subtle and important detail in the build phase. You might expect that building a heap from `n` elements — calling sift_down `n/2` times — would cost O(n log n). Surprisingly, it's only **O(n)**.
+
+Here's the intuition: most nodes are near the bottom of the tree, and those nodes barely need to move. Half the nodes are leaves — they don't move at all. A quarter of the nodes are one level above the leaves — they move at most 1 step. An eighth move at most 2 steps. Only the root might travel the full height of the tree. When you sum this up mathematically, it converges to O(n), not O(n log n).
+
+This is why the bottom-up approach (starting from `n/2 - 1` and working toward the root) is preferred over repeatedly inserting elements. The bottom-up build exploits the fact that small subtrees near the bottom are cheap to fix.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void swap(int *a, int *b) { int t = *a; *a = *b; *b = t; }
+
+void sift_down(int arr[], int n, int i) {
+    while (1) {
+        int largest = i;
+        int left = 2 * i + 1;
+        int right = 2 * i + 2;
+        if (left < n && arr[left] > arr[largest]) largest = left;
+        if (right < n && arr[right] > arr[largest]) largest = right;
+        if (largest == i) break;
+        swap(&arr[i], &arr[largest]);
+        i = largest;
+    }
+}
+
+void heapsort(int arr[], int n) {
+    // Build max-heap (bottom-up)
+    for (int i = n / 2 - 1; i >= 0; i--) {
+        sift_down(arr, n, i);
+    }
+
+    // Extract max repeatedly
+    for (int i = n - 1; i > 0; i--) {
+        swap(&arr[0], &arr[i]);  // Move max to end
+        sift_down(arr, i, 0);    // Fix heap with reduced size
+    }
+}
+
+int main() {
+    int arr[] = {12, 11, 13, 5, 6, 7, 3, 1, 9};
+    int n = 9;
+
+    printf("Before: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    heapsort(arr, n);
+
+    printf("After:  ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n log n)" space="O(1)" />
+
+<Complexity time="O(n log n)" space="O(1)" />
+
+## Why Heaps Matter: Priority Queue Motivation
+
+Heaps are used wherever you need to repeatedly find the "best" element without fully sorting:
+
+- **Operating systems**: the OS scheduler uses a priority queue to decide which process runs next. High-priority system tasks preempt lower-priority background work.
+- **Dijkstra's shortest path algorithm**: at each step, you need the unvisited vertex with the smallest tentative distance. A min-heap makes this O(E log V) instead of O(V^2).
+- **ER triage**: patients ranked by severity, not arrival time.
+- **Event-driven simulation**: process events in chronological order; new events are inserted as they're discovered.
+- **Merge K sorted lists**: repeatedly extract the smallest head element from K lists. A heap does this in O(log K) per extraction.
+
+The fundamental insight is that a heap maintains *just enough* order. A fully sorted array can also find the minimum in O(1), but inserting into a sorted array is O(n). A heap gives you O(1) peek and O(log n) for both insert and extract — the perfect balance for dynamic priority management.
+
+## Exercise: K Smallest Elements
+
+<Exercise
+  title="Find K smallest"
+  description="Read N numbers, then K. Print the K smallest numbers in ascending order."
+  starterCode={`#include <stdio.h>
+
+void swap(int *a, int *b) { int t = *a; *a = *b; *b = t; }
+
+void sift_down(int arr[], int n, int i) {
+    while (1) {
+        int smallest = i;
+        int l = 2*i+1, r = 2*i+2;
+        if (l < n && arr[l] < arr[smallest]) smallest = l;
+        if (r < n && arr[r] < arr[smallest]) smallest = r;
+        if (smallest == i) break;
+        swap(&arr[i], &arr[smallest]);
+        i = smallest;
+    }
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    int arr[200];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    int k;
+    scanf("%d", &k);
+
+    // Build min-heap
+    for (int i = n/2-1; i >= 0; i--) sift_down(arr, n, i);
+
+    // Extract K smallest
+    int size = n;
+    for (int i = 0; i < k; i++) {
+        printf("%d", arr[0]);
+        if (i < k - 1) printf(" ");
+        swap(&arr[0], &arr[size-1]);
+        size--;
+        sift_down(arr, size, 0);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n5 3 8 1 9 2 7\n3", expected_stdout: "1 2 3\n" },
+    { stdin: "5\n10 20 30 40 50\n2", expected_stdout: "10 20\n" },
+    { stdin: "4\n4 3 2 1\n4", expected_stdout: "1 2 3 4\n" }
+  ]}
+  hints={[
+    "Build a min-heap from the array.",
+    "Extract the minimum K times.",
+    "Each extraction is O(log n), so total is O(K log n)."
+  ]}
+/>
+
+## Exercise: Median Tracker
+
+<Exercise
+  title="Running median (simplified)"
+  description="Read N numbers one at a time. After each insertion, print the median. For even count, print the smaller of the two middle values. Use sorted insertion (simpler than two heaps)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int sorted[200];
+    int count = 0;
+
+    for (int i = 0; i < n; i++) {
+        int x;
+        scanf("%d", &x);
+
+        // Insert in sorted position
+        int pos = count;
+        while (pos > 0 && sorted[pos-1] > x) {
+            sorted[pos] = sorted[pos-1];
+            pos--;
+        }
+        sorted[pos] = x;
+        count++;
+
+        // Print median
+        int mid = (count - 1) / 2;
+        printf("%d\\n", sorted[mid]);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n5 3 8 1 9", expected_stdout: "5\n3\n5\n3\n5\n" },
+    { stdin: "3\n1 2 3", expected_stdout: "1\n1\n2\n" },
+    { stdin: "4\n4 3 2 1", expected_stdout: "4\n3\n3\n2\n" }
+  ]}
+  hints={[
+    "Keep a sorted array. Insert each new element in its correct position.",
+    "The median index is (count - 1) / 2 for the lower-middle element.",
+    "This is O(n) per insertion. A real solution uses two heaps for O(log n)."
+  ]}
+/>
+
+## What's Next
+
+Next: **graphs** — representing relationships between entities and traversing them.

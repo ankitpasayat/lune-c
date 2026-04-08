@@ -1,0 +1,370 @@
+---
+title: "Linear & Binary Search"
+module: "Sorting & Searching"
+order: 1
+description: "Two fundamental search algorithms — sequential scan and divide-and-conquer on sorted data."
+difficulty: "beginner"
+---
+
+Searching is the most basic operation in programming: given a collection of things, find the one you're looking for. Every database query, every `Ctrl+F`, every spell checker — they all boil down to search. The question isn't *whether* you'll search, but *how fast* you can do it.
+
+There are two fundamental approaches, and the difference between them is the difference between flipping through every page of a book and opening it straight to the right chapter.
+
+## Linear Search
+
+The simplest possible approach: start at the beginning, look at each element, and stop when you find what you want. It's the strategy you'd use looking for a specific card in an unsorted deck — pick up each card, check it, move on.
+
+There's no cleverness here, and that's the point. Linear search makes **zero assumptions** about your data. The array can be sorted, unsorted, partially sorted, full of duplicates — it doesn't matter. You just walk through every element until you find a match (or run out of elements).
+
+<Editor defaultCode={`#include <stdio.h>
+
+int linear_search(int arr[], int n, int target) {
+    for (int i = 0; i < n; i++) {
+        if (arr[i] == target) {
+            return i;  // found at index i
+        }
+    }
+    return -1;  // not found
+}
+
+int main() {
+    int arr[] = {10, 23, 45, 70, 11, 15};
+    int n = 6;
+
+    int idx = linear_search(arr, n, 70);
+    if (idx != -1) {
+        printf("Found 70 at index %d\\n", idx);
+    } else {
+        printf("Not found\\n");
+    }
+
+    idx = linear_search(arr, n, 99);
+    printf("Search for 99: %s\\n", idx != -1 ? "found" : "not found");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Complexity time="O(n)" space="O(1)" />
+
+Think about what "O(n)" really means here. If you have 10 elements, you might check up to 10. If you have a million, you might check up to a million. The work grows in lockstep with the data size.
+
+- **Best case**: The target is the very first element. You check once and you're done. O(1).
+- **Worst case**: The target is the last element, or it's not in the array at all. You check every single element. O(n).
+- **Average case**: On average, you'll check about half the elements before finding a match. That's `n/2`, which is still O(n) — constants don't change the growth rate.
+
+<Callout type="info">
+Linear search is simple but slow for large arrays. It's perfectly fine for small collections or unsorted data where you have no other option. But if you're searching the same sorted dataset repeatedly, there's a dramatically better way.
+</Callout>
+
+## Binary Search — The Phone Book Trick
+
+Imagine looking up "Martinez" in a phone book (or a dictionary, if you've never seen a phone book). You wouldn't start at page 1 and read every name. Instead, you'd:
+
+1. Open the book roughly to the middle — you see names starting with "K".
+2. "Martinez" comes after "K", so you ignore the entire first half.
+3. Open the middle of the remaining half — you see "P".
+4. "Martinez" comes before "P", so you ignore everything after "P".
+5. Keep halving until you land on "Martinez".
+
+Each step **eliminates half** of the remaining possibilities. That's the core insight of binary search: *if the data is sorted, every comparison tells you which half to keep*.
+
+### The Invariant
+
+Binary search works because it maintains an **invariant** — a promise that stays true at every step of the algorithm:
+
+> **The answer (if it exists) is always within the range `[low, high]`.**
+
+You start with `low = 0` and `high = n - 1`, meaning the entire array. Each iteration, you compute `mid` and compare:
+- If `arr[mid]` is your target, you're done.
+- If `arr[mid] < target`, the target must be to the right of `mid`, so you set `low = mid + 1`.
+- If `arr[mid] > target`, the target must be to the left of `mid`, so you set `high = mid - 1`.
+
+After each step, the invariant still holds: the target is somewhere in `[low, high]` — you've just made that range smaller. When `low > high`, the range is empty, and the target doesn't exist in the array.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int binary_search(int arr[], int n, int target) {
+    int low = 0;
+    int high = n - 1;
+
+    while (low <= high) {
+        int mid = low + (high - low) / 2;  // avoid overflow
+
+        if (arr[mid] == target) {
+            return mid;
+        } else if (arr[mid] < target) {
+            low = mid + 1;   // target is in right half
+        } else {
+            high = mid - 1;  // target is in left half
+        }
+    }
+    return -1;  // not found
+}
+
+int main() {
+    int arr[] = {2, 5, 8, 12, 16, 23, 38, 56, 72, 91};
+    int n = 10;
+
+    int tests[] = {23, 1, 72, 50};
+    for (int i = 0; i < 4; i++) {
+        int idx = binary_search(arr, n, tests[i]);
+        printf("Search %d: ", tests[i]);
+        if (idx != -1) {
+            printf("found at index %d\\n", idx);
+        } else {
+            printf("not found\\n");
+        }
+    }
+
+    return 0;
+}
+`} time="O(log n)" space="O(1)" />
+
+<Complexity time="O(log n)" space="O(1)" />
+
+### Step-by-Step Trace
+
+Let's trace searching for **23** in `{2, 5, 8, 12, 16, 23, 38, 56, 72, 91}`:
+
+```
+Step 1: low=0, high=9, mid=4 → arr[4]=16
+        16 < 23, so target is in right half → low = 5
+
+Step 2: low=5, high=9, mid=7 → arr[7]=56
+        56 > 23, so target is in left half → high = 6
+
+Step 3: low=5, high=6, mid=5 → arr[5]=23
+        23 == 23, found! Return index 5.
+```
+
+Three comparisons to find the answer in a 10-element array. Now trace searching for **50** (not in the array):
+
+```
+Step 1: low=0, high=9, mid=4 → arr[4]=16
+        16 < 50 → low = 5
+
+Step 2: low=5, high=9, mid=7 → arr[7]=56
+        56 > 50 → high = 6
+
+Step 3: low=5, high=6, mid=5 → arr[5]=23
+        23 < 50 → low = 6
+
+Step 4: low=6, high=6, mid=6 → arr[6]=38
+        38 < 50 → low = 7
+
+Now low (7) > high (6) → not found. Return -1.
+```
+
+Four comparisons, and we've conclusively determined that 50 isn't in the array.
+
+### Why Sorted Input is Required
+
+Binary search's power comes from a single assumption: **if `arr[mid] < target`, then every element before `mid` is also less than `target`**. That's only true if the array is sorted. In an unsorted array, elements smaller than `mid` could be anywhere — eliminating a half would risk skipping the answer.
+
+This is the fundamental tradeoff: sorting costs time upfront (`O(n log n)` for a good sort), but it unlocks `O(log n)` searches afterward. If you're doing many searches on the same data, it's worth sorting first. If you're searching only once, linear search is probably cheaper than sorting + binary search.
+
+### The Off-by-One Pitfalls
+
+Binary search is famously tricky to implement correctly. Here are the critical decisions:
+
+**`low <= high` vs `low < high`**: The `<=` ensures we check the case where `low == high` (one element left). Using `<` would skip that last element and miss valid targets. Try changing it to `<` in the example above and search for the first or last element — it fails.
+
+**`mid + 1` and `mid - 1` vs just `mid`**: After checking `arr[mid]`, we *know* that `mid` isn't the answer (if it were, we'd have returned already). So we exclude it: `low = mid + 1` or `high = mid - 1`. If you wrote `low = mid` instead, you could get stuck in an infinite loop when `low == mid` (which happens when `high - low == 1`).
+
+**`mid = low + (high - low) / 2` vs `(low + high) / 2`**: Both compute the midpoint, but `low + high` can overflow if both are large (e.g., both near `INT_MAX`). The `low + (high - low) / 2` form avoids this. In practice, this only matters with very large arrays (over a billion elements), but it's a good habit.
+
+<Callout type="warning">
+Binary search **requires a sorted array**. If the data isn't sorted, you must sort it first (or use linear search). Also note: `mid = low + (high - low) / 2` is safer than `(low + high) / 2` which can overflow for very large arrays.
+</Callout>
+
+## Recursive Binary Search
+
+The same algorithm expressed recursively. The logic is identical — instead of a loop, each recursive call narrows `[low, high]`:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int binary_search_rec(int arr[], int low, int high, int target) {
+    if (low > high) return -1;
+
+    int mid = low + (high - low) / 2;
+
+    if (arr[mid] == target) return mid;
+    if (arr[mid] < target) {
+        return binary_search_rec(arr, mid + 1, high, target);
+    }
+    return binary_search_rec(arr, low, mid - 1, target);
+}
+
+int main() {
+    int arr[] = {1, 3, 5, 7, 9, 11, 13, 15};
+    int n = 8;
+
+    int idx = binary_search_rec(arr, 0, n - 1, 7);
+    printf("Found 7 at index %d\\n", idx);
+
+    idx = binary_search_rec(arr, 0, n - 1, 6);
+    printf("Search for 6: index %d\\n", idx);  // -1
+
+    return 0;
+}
+`} time="O(log n)" space="O(log n) stack" />
+
+The recursive version is elegant but has a cost: each call adds a frame to the call stack, so space goes from O(1) to O(log n). For practical purposes O(log n) stack depth is fine — even for a billion elements, that's only 30 frames — but the iterative version is preferred in performance-critical code.
+
+## Comparison
+
+| Algorithm | Time (avg) | Time (worst) | Requires sorted? |
+|-----------|-----------|-------------|-----------------|
+| Linear | O(n) | O(n) | No |
+| Binary | O(log n) | O(log n) | Yes |
+
+To feel the difference: for 1 million elements, linear search checks up to **1,000,000** elements. Binary search checks at most **20**. For a billion elements, linear search might check a billion. Binary search checks at most **30**. That's the power of halving — logarithmic growth is incredibly slow.
+
+The rule of thumb: if your data is sorted (or you can sort it once and search many times), always use binary search. If your data is unsorted and you only search once, linear search is the practical choice.
+
+## Exercise: Linear Search
+
+<Exercise
+  title="Find the target"
+  description="Read N, then N integers, then a target value. Print the 0-based index of the first occurrence of the target, or -1 if not found."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int target;
+    scanf("%d", &target);
+
+    // Find and print the index
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n10 20 30 40 50\n30", expected_stdout: "2\n" },
+    { stdin: "4\n1 2 3 4\n5", expected_stdout: "-1\n" },
+    { stdin: "3\n7 7 7\n7", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Loop through the array with a for loop.",
+    "If arr[i] == target, print i and stop.",
+    "If you finish the loop without finding it, print -1."
+  ]}
+/>
+
+## Exercise: Binary Search
+
+<Exercise
+  title="Binary search"
+  description="Read N, then N sorted integers, then a target. Use binary search to find the target. Print the index or -1."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int target;
+    scanf("%d", &target);
+
+    // Binary search
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n2 5 8 12 16 23 38\n16", expected_stdout: "4\n" },
+    { stdin: "5\n1 2 3 4 5\n6", expected_stdout: "-1\n" },
+    { stdin: "1\n42\n42", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Initialize low = 0, high = n - 1.",
+    "Loop while low <= high.",
+    "Calculate mid = low + (high - low) / 2.",
+    "Compare arr[mid] with target to decide which half to search."
+  ]}
+/>
+
+## bsearch — Binary Search in the Standard Library
+
+C's standard library includes a built-in binary search function called `bsearch()` in `<stdlib.h>`. It follows the same callback pattern as `qsort()` — you provide a comparator function, and the library does the searching:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+int compare_ints(const void *a, const void *b) {
+    return (*(int *)a - *(int *)b);
+}
+
+int main() {
+    int arr[] = {2, 5, 8, 12, 16, 23, 38, 56};
+    int n = 8;
+    int target = 23;
+
+    int *result = bsearch(&target, arr, n, sizeof(int), compare_ints);
+
+    if (result != NULL) {
+        printf("Found %d at index %ld\n", *result, result - arr);
+    } else {
+        printf("Not found\n");
+    }
+    return 0;
+}
+```
+
+The signature is `bsearch(key, base, nmemb, size, compar)` — the same five parameters as `qsort`, except the first argument is a pointer to the value you're searching for (the "key") instead of being part of the array. It returns a pointer to the matching element, or `NULL` if not found.
+
+The critical requirement: **the array must already be sorted** according to the same comparator. `qsort()` + `bsearch()` is a common pair — sort once, then do repeated lookups in O(log n) each. If the array contains duplicates, `bsearch()` may return a pointer to any one of the matching elements (not necessarily the first).
+
+## Exercise: Count Occurrences
+
+<Exercise
+  title="Count occurrences in sorted array"
+  description="Read N sorted integers and a target. Print how many times the target appears. Use binary search to find the first and last occurrence efficiently."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int target;
+    scanf("%d", &target);
+
+    // Count occurrences of target
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "8\n1 2 2 2 3 4 4 5\n2", expected_stdout: "3\n" },
+    { stdin: "5\n1 1 1 1 1\n1", expected_stdout: "5\n" },
+    { stdin: "4\n1 2 3 4\n5", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Find the first occurrence: binary search but keep going left when you find a match.",
+    "Find the last occurrence: binary search but keep going right when you find a match.",
+    "Count = last - first + 1 (if found).",
+    "Alternatively, a simple linear scan also works for this exercise."
+  ]}
+/>
+
+## What's Next
+
+Now that we can search, let's learn to **sort**. Next: bubble sort, selection sort, and insertion sort.

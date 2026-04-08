@@ -1,0 +1,6 @@
+{
+  "title": "Stacks, Queues & Trees",
+  "order": 6,
+  "phase": 2,
+  "description": "Abstract data types built on arrays and linked lists — LIFO stacks, FIFO queues, and hierarchical trees."
+}

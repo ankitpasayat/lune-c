@@ -1,0 +1,391 @@
+---
+title: "Condition Variables & Semaphores"
+module: "Threads & Concurrency"
+order: 3
+description: "Advanced synchronization with condition variables, semaphores, and the producer-consumer pattern."
+difficulty: "advanced"
+---
+
+Mutexes protect shared data, but sometimes a thread needs to **wait** for something to happen — wait for the buffer to have data, wait for a slot to open up, wait for a task to be ready. You could check in a loop, but that's wasteful. Condition variables solve this elegantly.
+
+## The Waiting Room Analogy
+
+Imagine a doctor's office. You could stand at the receptionist's desk asking "Is the doctor free yet?" every five seconds. That's **busy waiting** — you're wasting your energy (and annoying the receptionist).
+
+The smarter approach: sit in the waiting room and let the receptionist *call your name* when the doctor is ready. You're asleep (not burning CPU), and you get notified exactly when the condition you're waiting for becomes true.
+
+That's what condition variables do.
+
+## Why Busy Waiting Is Unacceptable
+
+```c
+// BAD: busy waiting wastes CPU
+while (!data_ready) {
+    // This loop runs millions of times per second
+    // consuming an entire CPU core to do... nothing
+}
+```
+
+This is called **spin-waiting** or **polling**. Your thread is constantly checking a variable, burning CPU cycles that could be used by other threads or processes. On a single-core machine, spin-waiting can even *prevent* the thread that would make `data_ready` true from getting CPU time — creating a live-lock.
+
+Condition variables let a thread say "wake me up when this becomes true" and go to sleep, consuming zero CPU until the notification arrives.
+
+## Condition Variables: Wait and Signal
+
+A condition variable provides three operations:
+
+- **`pthread_cond_wait()`** — "I'll go to sleep until someone signals me." Crucially, this also releases the associated mutex (so another thread can make the condition true) and re-acquires it when woken up.
+- **`pthread_cond_signal()`** — "Wake up one thread that's waiting."
+- **`pthread_cond_broadcast()`** — "Wake up all threads that are waiting."
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int data_ready = 0;
+int shared_data = 0;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+
+void *producer(void *arg) {
+    // Simulate producing data
+    printf("Producer: preparing data...\\n");
+
+    pthread_mutex_lock(&lock);
+    shared_data = 42;
+    data_ready = 1;
+    printf("Producer: data ready! Signaling...\\n");
+    pthread_cond_signal(&cond);  // Wake one waiter
+    pthread_mutex_unlock(&lock);
+
+    return NULL;
+}
+
+void *consumer(void *arg) {
+    pthread_mutex_lock(&lock);
+
+    while (!data_ready) {
+        printf("Consumer: waiting for data...\\n");
+        pthread_cond_wait(&cond, &lock);
+        // cond_wait: unlocks mutex, sleeps, re-locks on wake
+    }
+
+    printf("Consumer: got data = %d\\n", shared_data);
+    pthread_mutex_unlock(&lock);
+
+    return NULL;
+}
+
+int main() {
+    pthread_t prod, cons;
+
+    pthread_create(&cons, NULL, consumer, NULL);
+    pthread_create(&prod, NULL, producer, NULL);
+
+    pthread_join(prod, NULL);
+    pthread_join(cons, NULL);
+
+    pthread_mutex_destroy(&lock);
+    pthread_cond_destroy(&cond);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Why the While Loop? Spurious Wakeups
+
+You might wonder: why check the condition in a `while` loop instead of an `if`?
+
+```c
+// WRONG — can break!
+if (!data_ready) {
+    pthread_cond_wait(&cond, &lock);
+}
+// Assume data_ready is true here — DANGEROUS
+
+// CORRECT — always recheck
+while (!data_ready) {
+    pthread_cond_wait(&cond, &lock);
+}
+// data_ready is guaranteed true here
+```
+
+Two reasons:
+
+1. **Spurious wakeups**: The POSIX spec allows `cond_wait` to return even when nobody signaled. This sounds like a bug, but it's a practical concession — it lets the implementation be more efficient on certain hardware. Rare, but possible.
+
+2. **Stolen signals**: If multiple threads are waiting and only one should proceed, a signal might wake a thread that can't actually use the data (e.g., it was already consumed by another thread that woke up first). The while loop makes the thread go back to sleep if the condition isn't actually met.
+
+The rule is simple: **always use `while`, never `if`**.
+
+<Callout type="warning">
+Always check the condition in a **while loop**, not an **if**. Condition variables can have **spurious wakeups** — the thread may wake up even when no signal was sent.
+</Callout>
+
+## The Producer-Consumer Pattern
+
+The most common use of condition variables is **producer-consumer**: one or more threads produce data, one or more consume it, and a bounded buffer sits in between.
+
+This pattern needs **two** condition variables:
+- `not_full` — producers wait on this when the buffer is full
+- `not_empty` — consumers wait on this when the buffer is empty
+
+When a producer adds an item, it signals `not_empty`. When a consumer removes one, it signals `not_full`. The mutex protects the buffer itself.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+#define BUFFER_SIZE 5
+
+typedef struct {
+    int buffer[BUFFER_SIZE];
+    int count;
+    int in;   // write index
+    int out;  // read index
+    pthread_mutex_t lock;
+    pthread_cond_t not_full;
+    pthread_cond_t not_empty;
+} BoundedBuffer;
+
+void buffer_init(BoundedBuffer *b) {
+    b->count = 0;
+    b->in = 0;
+    b->out = 0;
+    pthread_mutex_init(&b->lock, NULL);
+    pthread_cond_init(&b->not_full, NULL);
+    pthread_cond_init(&b->not_empty, NULL);
+}
+
+void buffer_put(BoundedBuffer *b, int item) {
+    pthread_mutex_lock(&b->lock);
+
+    while (b->count == BUFFER_SIZE) {
+        pthread_cond_wait(&b->not_full, &b->lock);
+    }
+
+    b->buffer[b->in] = item;
+    b->in = (b->in + 1) % BUFFER_SIZE;
+    b->count++;
+
+    pthread_cond_signal(&b->not_empty);
+    pthread_mutex_unlock(&b->lock);
+}
+
+int buffer_get(BoundedBuffer *b) {
+    pthread_mutex_lock(&b->lock);
+
+    while (b->count == 0) {
+        pthread_cond_wait(&b->not_empty, &b->lock);
+    }
+
+    int item = b->buffer[b->out];
+    b->out = (b->out + 1) % BUFFER_SIZE;
+    b->count--;
+
+    pthread_cond_signal(&b->not_full);
+    pthread_mutex_unlock(&b->lock);
+
+    return item;
+}
+
+BoundedBuffer shared;
+
+void *producer(void *arg) {
+    for (int i = 1; i <= 8; i++) {
+        buffer_put(&shared, i);
+        printf("Produced: %d\\n", i);
+    }
+    return NULL;
+}
+
+void *consumer(void *arg) {
+    for (int i = 0; i < 8; i++) {
+        int item = buffer_get(&shared);
+        printf("Consumed: %d\\n", item);
+    }
+    return NULL;
+}
+
+int main() {
+    buffer_init(&shared);
+
+    pthread_t prod, cons;
+    pthread_create(&prod, NULL, producer, NULL);
+    pthread_create(&cons, NULL, consumer, NULL);
+
+    pthread_join(prod, NULL);
+    pthread_join(cons, NULL);
+
+    printf("\\nAll items produced and consumed!\\n");
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Study this code carefully — it's one of the most important concurrent patterns in all of systems programming. Web servers use it to queue incoming requests. Thread pools use it to distribute tasks. Message queues use it for inter-component communication.
+
+## Semaphores: Counting Locks
+
+A **semaphore** is a generalized lock with a counter instead of a boolean. While a mutex is either locked or unlocked (1 or 0), a semaphore can count to any non-negative number.
+
+- **`sem_wait()` (P operation)**: if counter > 0, decrement it and proceed. If counter == 0, block until it becomes positive.
+- **`sem_post()` (V operation)**: increment the counter. If any thread was blocked in `sem_wait()`, wake one up.
+
+The classic use: limiting concurrent access to a resource pool. If you have 3 database connections, initialize a semaphore to 3. Each thread calls `sem_wait()` before using a connection and `sem_post()` after releasing it. At most 3 threads run simultaneously.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+#define MAX_CONNECTIONS 3
+
+sem_t connection_pool;
+
+void *client(void *arg) {
+    int id = *(int *)arg;
+
+    printf("Client %d: requesting connection...\\n", id);
+    sem_wait(&connection_pool);  // Wait for available slot
+
+    printf("Client %d: connected! (working...)\\n", id);
+    // Simulate work
+    for (volatile long i = 0; i < 10000000L; i++);
+
+    printf("Client %d: done, releasing connection\\n", id);
+    sem_post(&connection_pool);  // Release slot
+
+    return NULL;
+}
+
+int main() {
+    sem_init(&connection_pool, 0, MAX_CONNECTIONS);
+
+    pthread_t threads[6];
+    int ids[] = {1, 2, 3, 4, 5, 6};
+
+    for (int i = 0; i < 6; i++) {
+        pthread_create(&threads[i], NULL, client, &ids[i]);
+    }
+
+    for (int i = 0; i < 6; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("\\nAll clients served!\\n");
+    sem_destroy(&connection_pool);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## Mutex vs Semaphore: When to Use Which
+
+| Feature | Mutex | Semaphore |
+|---------|-------|-----------|
+| Counter | Binary (0 or 1) | Any non-negative integer |
+| Ownership | Only the locker can unlock | Any thread can post |
+| Use case | Protect critical sections | Limit concurrent access |
+| Example | Protecting a shared variable | Connection pool with N slots |
+
+A key difference: mutexes have **ownership**. Only the thread that locked a mutex should unlock it. Semaphores have no ownership — any thread can `sem_post()`, which makes them suitable for signaling between threads (producer posts, consumer waits).
+
+A semaphore initialized to 1 behaves like a mutex, but without the ownership semantics. When in doubt, prefer a mutex for protecting data and a semaphore for counting available resources.
+
+## Exercise: Bounded Buffer Simulation
+
+<Exercise
+  title="Circular buffer"
+  description="Implement a circular buffer of size K. Read N operations: 'P X' (produce item X) and 'C' (consume). For 'P', if buffer is full print 'FULL', else print 'produced X'. For 'C', if buffer is empty print 'EMPTY', else print 'consumed X' (oldest item)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int k, n;
+    scanf("%d %d", &k, &n);
+
+    int buffer[100];
+    int in = 0, out = 0, count = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op;
+        scanf(" %c", &op);
+
+        if (op == 'P') {
+            int x;
+            scanf("%d", &x);
+            if (count == k) {
+                printf("FULL\\n");
+            } else {
+                buffer[in] = x;
+                in = (in + 1) % k;
+                count++;
+                printf("produced %d\\n", x);
+            }
+        } else if (op == 'C') {
+            if (count == 0) {
+                printf("EMPTY\\n");
+            } else {
+                printf("consumed %d\\n", buffer[out]);
+                out = (out + 1) % k;
+                count--;
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 6\nP 1\nP 2\nP 3\nP 4\nC\nC", expected_stdout: "produced 1\nproduced 2\nproduced 3\nFULL\nconsumed 1\nconsumed 2\n" },
+    { stdin: "2 4\nC\nP 5\nC\nC", expected_stdout: "EMPTY\nproduced 5\nconsumed 5\nEMPTY\n" },
+    { stdin: "2 5\nP 10\nP 20\nC\nP 30\nC", expected_stdout: "produced 10\nproduced 20\nconsumed 10\nproduced 30\nconsumed 20\n" }
+  ]}
+  hints={[
+    "Use in and out indices with modular arithmetic for circular behavior.",
+    "Track count to know if buffer is full (count == k) or empty (count == 0).",
+    "Consume returns the oldest item (at the 'out' index)."
+  ]}
+/>
+
+## Exercise: Semaphore Counter
+
+<Exercise
+  title="Semaphore simulation"
+  description="Simulate a semaphore with initial value S. Read N operations: 'W' (wait/decrement) and 'P' (post/increment). For 'W': if value > 0, decrement and print 'acquired (value=V)'. If value == 0, print 'blocked'. For 'P': increment and print 'released (value=V)'."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int s, n;
+    scanf("%d %d", &s, &n);
+
+    for (int i = 0; i < n; i++) {
+        char op;
+        scanf(" %c", &op);
+
+        if (op == 'W') {
+            if (s > 0) {
+                s--;
+                printf("acquired (value=%d)\\n", s);
+            } else {
+                printf("blocked\\n");
+            }
+        } else if (op == 'P') {
+            s++;
+            printf("released (value=%d)\\n", s);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "2 5\nW\nW\nW\nP\nW", expected_stdout: "acquired (value=1)\nacquired (value=0)\nblocked\nreleased (value=1)\nacquired (value=0)\n" },
+    { stdin: "1 3\nW\nP\nP", expected_stdout: "acquired (value=0)\nreleased (value=1)\nreleased (value=2)\n" },
+    { stdin: "0 3\nW\nP\nW", expected_stdout: "blocked\nreleased (value=1)\nacquired (value=0)\n" }
+  ]}
+  hints={[
+    "Wait decrements if value > 0, otherwise blocks.",
+    "Post always increments the value.",
+    "A semaphore with initial value 1 acts like a mutex."
+  ]}
+/>
+
+## What's Next
+
+The final concurrency topic: **atomic operations and thread-safe patterns** — lock-free programming and common concurrent algorithms.

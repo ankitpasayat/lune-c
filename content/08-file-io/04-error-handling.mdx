@@ -1,0 +1,334 @@
+---
+title: "Error Handling"
+module: "File I/O"
+order: 4
+description: "Detecting and handling I/O errors — errno, perror, ferror, and defensive programming."
+difficulty: "intermediate"
+---
+
+Things go wrong: files don't exist, disks fill up, permissions are denied. Good C code checks for errors and handles them gracefully.
+
+## errno and perror
+
+When a system call fails, it sets the global variable `errno`. `perror` prints a human-readable error message:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
+int main() {
+    FILE *fp = fopen("/nonexistent/file.txt", "r");
+
+    if (fp == NULL) {
+        // Three ways to report the error:
+
+        // 1. perror — prints your message + system error
+        perror("fopen failed");
+
+        // 2. strerror — get error string from errno
+        printf("Error: %s\\n", strerror(errno));
+
+        // 3. Direct errno value
+        printf("errno = %d\\n", errno);
+
+        return 1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+`perror("message")` prints: `message: No such file or directory` (or whatever the error is). It's the simplest way to report I/O errors.
+</Callout>
+
+## Common errno Values
+
+| Constant | Meaning |
+|----------|---------|
+| `ENOENT` | No such file or directory |
+| `EACCES` | Permission denied |
+| `EEXIST` | File already exists |
+| `ENOMEM` | Out of memory |
+| `EINVAL` | Invalid argument |
+| `EIO` | I/O error |
+
+## Checking fread/fwrite
+
+`fread` and `fwrite` return the number of items successfully read/written:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Write some data
+    FILE *fp = fopen("test.bin", "wb");
+    if (!fp) { perror("open"); return 1; }
+
+    int data[] = {1, 2, 3, 4, 5};
+    size_t written = fwrite(data, sizeof(int), 5, fp);
+    if (written != 5) {
+        perror("fwrite");
+        fclose(fp);
+        return 1;
+    }
+    fclose(fp);
+
+    // Read back — request more than available
+    fp = fopen("test.bin", "rb");
+    if (!fp) { perror("open"); return 1; }
+
+    int buffer[10];
+    size_t read = fread(buffer, sizeof(int), 10, fp);
+    printf("Requested 10, got %zu\\n", read);
+
+    // Check why we stopped
+    if (feof(fp)) {
+        printf("Reached end of file\\n");
+    }
+    if (ferror(fp)) {
+        printf("An error occurred\\n");
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## ferror and feof
+
+| Function | Returns true when |
+|----------|------------------|
+| `feof(fp)` | End-of-file indicator is set |
+| `ferror(fp)` | Error indicator is set |
+| `clearerr(fp)` | Clears both indicators |
+
+<Callout type="warning">
+Don't use `feof()` as a loop condition! It only returns true **after** a read has already failed. Instead, check the return value of `fgets`, `fscanf`, or `fread`.
+</Callout>
+
+Wrong:
+```c
+while (!feof(fp)) {       // BUG: processes one extra iteration
+    fgets(line, 256, fp);
+    process(line);
+}
+```
+
+Right:
+```c
+while (fgets(line, 256, fp)) {  // Correct: stops when fgets fails
+    process(line);
+}
+```
+
+## Defensive File I/O Pattern
+
+A robust pattern for file operations:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int process_file(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (fp == NULL) {
+        perror(filename);
+        return -1;
+    }
+
+    char line[256];
+    int line_count = 0;
+    int char_count = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line_count++;
+        for (int i = 0; line[i]; i++) {
+            char_count++;
+        }
+    }
+
+    // Check if we stopped due to error (not just EOF)
+    if (ferror(fp)) {
+        perror("read error");
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+
+    printf("Lines: %d\\n", line_count);
+    printf("Characters: %d\\n", char_count);
+    return 0;
+}
+
+int main() {
+    // Create test file
+    FILE *fp = fopen("test.txt", "w");
+    fprintf(fp, "Hello World\\nLine Two\\n");
+    fclose(fp);
+
+    process_file("test.txt");
+    process_file("nonexistent.txt");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## Temporary Files
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // tmpfile creates a temp file that's deleted when closed
+    FILE *tmp = tmpfile();
+    if (!tmp) {
+        perror("tmpfile");
+        return 1;
+    }
+
+    fprintf(tmp, "temporary data: %d\\n", 42);
+
+    // Rewind to read from beginning
+    rewind(tmp);
+
+    char line[100];
+    fgets(line, sizeof(line), tmp);
+    printf("From temp file: %s", line);
+
+    fclose(tmp);  // file is automatically deleted
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## setjmp and longjmp — Non-Local Jumps
+
+C has no exceptions. But what if an error occurs deep in a call stack and you want to jump back to a known recovery point? `setjmp` and `longjmp` from `<setjmp.h>` provide a primitive form of `try/catch`:
+
+```c
+#include <setjmp.h>
+
+jmp_buf recovery_point;
+
+void deep_function() {
+    // Something went wrong — jump back to setjmp
+    longjmp(recovery_point, 1);  // "throw" with error code 1
+}
+
+int main() {
+    if (setjmp(recovery_point) == 0) {
+        // Normal execution (like "try")
+        deep_function();
+    } else {
+        // Jumped back here (like "catch")
+        printf("Recovered from error\n");
+    }
+    return 0;
+}
+```
+
+`setjmp` saves the current execution state (registers, stack pointer) and returns 0. When `longjmp` is later called with that saved state, execution resumes at `setjmp` — but this time it returns the non-zero value passed to `longjmp`.
+
+<Callout type="warning">
+`setjmp`/`longjmp` are dangerous in practice. They bypass normal cleanup (no destructors, no `fclose`, no `free`). Local variables modified between `setjmp` and `longjmp` may have indeterminate values unless declared `volatile`. In most cases, returning error codes up the call stack is cleaner and safer. You'll mainly encounter `setjmp`/`longjmp` in legacy code and in libraries like `libpng`.
+</Callout>
+
+## Working with Time: time.h
+
+The `<time.h>` header provides functions for getting the current time, measuring durations, and formatting dates:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <time.h>\n\nint main() {\n    // Get current calendar time\n    time_t now = time(NULL);\n    printf("Seconds since Jan 1, 1970: %ld\\n", (long)now);\n    \n    // Convert to human-readable local time\n    struct tm *local = localtime(&now);\n    printf("Year:  %d\\n", local->tm_year + 1900);\n    printf("Month: %d\\n", local->tm_mon + 1);  // 0-indexed!\n    printf("Day:   %d\\n", local->tm_mday);\n    printf("Time:  %02d:%02d:%02d\\n",\n           local->tm_hour, local->tm_min, local->tm_sec);\n    \n    // Format as a string\n    char buf[64];\n    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", local);\n    printf("Formatted: %s\\n", buf);\n    \n    // Measure elapsed time (CPU time)\n    clock_t start = clock();\n    volatile long sum = 0;\n    for (long i = 0; i < 10000000; i++) sum += i;\n    clock_t end = clock();\n    \n    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;\n    printf("\\nComputation took %.4f seconds\\n", elapsed);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Key functions:
+- `time(NULL)` — returns seconds since the Unix epoch (Jan 1, 1970)
+- `localtime(&t)` — converts to a `struct tm` with year/month/day/hour/min/sec fields
+- `strftime(buf, size, format, tm)` — formats time as a string (like `printf` for dates)
+- `clock()` — returns CPU ticks consumed; divide by `CLOCKS_PER_SEC` for seconds
+- `difftime(t2, t1)` — difference between two `time_t` values in seconds
+
+<Callout type="info">
+`clock()` measures **CPU time** (how long your code actually runs on the processor), while `time()` measures **wall-clock time** (real-world elapsed time). For benchmarking, `clock()` is more useful since it isn't affected by other processes.
+</Callout>
+
+## Exercise: Safe Number Reader
+
+<Exercise
+  title="Validate numeric input"
+  description="Read lines from stdin. Each line should contain a single integer. Print the integer if valid, or 'error' if the line doesn't contain a valid integer. After all lines, print the sum of valid integers."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main() {
+    char line[256];
+    int sum = 0;
+
+    while (fgets(line, sizeof(line), stdin)) {
+        line[strcspn(line, "\\n")] = '\\0';
+
+        char *endptr;
+        long val = strtol(line, &endptr, 10);
+
+        if (*endptr == '\\0' && endptr != line) {
+            printf("%ld\\n", val);
+            sum += (int)val;
+        } else {
+            printf("error\\n");
+        }
+    }
+
+    printf("sum: %d\\n", sum);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "10\nabc\n20\n30", expected_stdout: "10\nerror\n20\n30\nsum: 60\n" },
+    { stdin: "5\n10\n15", expected_stdout: "5\n10\n15\nsum: 30\n" },
+    { stdin: "hello\nworld", expected_stdout: "error\nerror\nsum: 0\n" }
+  ]}
+  hints={[
+    "strtol converts a string to long. endptr points to the first char that wasn't part of the number.",
+    "If *endptr == '\\0' and endptr != line, the whole string was a valid number.",
+    "Sum only the valid numbers."
+  ]}
+/>
+
+## Exercise: CSV Parser
+
+<Exercise
+  title="Parse CSV"
+  description="Read lines in CSV format: name,score (no header, no spaces). Print each as 'name scored score'. After all lines, print 'average: X' where X is the integer average."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+int main() {
+    char line[256];
+    int total = 0, count = 0;
+
+    while (fgets(line, sizeof(line), stdin)) {
+        line[strcspn(line, "\\n")] = '\\0';
+        // Parse name and score from CSV line
+    }
+
+    if (count > 0) {
+        printf("average: %d\\n", total / count);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "Alice,90\nBob,80\nCharlie,70", expected_stdout: "Alice scored 90\nBob scored 80\nCharlie scored 70\naverage: 80\n" },
+    { stdin: "Test,100", expected_stdout: "Test scored 100\naverage: 100\n" },
+    { stdin: "X,50\nY,60", expected_stdout: "X scored 50\nY scored 60\naverage: 55\n" }
+  ]}
+  hints={[
+    "Use strtok(line, \",\") for the name, strtok(NULL, \",\") for the score string.",
+    "Convert score string to int with atoi.",
+    "Keep a running total and count for the average."
+  ]}
+/>
+
+## What's Next
+
+You've mastered file I/O! Next module: **the C preprocessor and build system** — how C code is transformed before compilation.

@@ -1,0 +1,158 @@
+---
+title: "Input with scanf"
+module: "C Fundamentals"
+order: 4
+description: "Reading user input — format specifiers, the address-of operator, and common pitfalls."
+difficulty: "beginner"
+---
+
+So far, our programs have only produced output. Now it's time to make them interactive by reading input from the user.
+
+## Reading an Integer
+
+The `scanf` function reads formatted input from **stdin** (standard input):
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int age;\n    \n    printf("Enter your age: ");\n    scanf("%d", &age);\n    \n    printf("You are %d years old.\\n", age);\n    \n    return 0;\n}\n`} stdin="25" time="O(1)" space="O(1)" />
+
+Two critical things to notice:
+
+1. **`%d`** — the format specifier, same as in `printf`. It tells `scanf` to expect an integer.
+2. **`&age`** — the **address-of** operator `&`. This gives `scanf` the memory location where it should store the value. Without `&`, your program will crash or behave unpredictably.
+
+<Callout type="warning">
+Forgetting the `&` in `scanf` is one of the most common C bugs. `scanf("%d", age)` compiles without error on many systems but causes **undefined behavior** at runtime. Always double-check your `scanf` calls.
+</Callout>
+
+## Reading Different Types
+
+Each type has its own format specifier:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int i;\n    float f;\n    char c;\n    \n    scanf("%d", &i);    // Read an integer\n    scanf("%f", &f);    // Read a float\n    scanf(" %c", &c);   // Read a character (note the space!)\n    \n    printf("int: %d\\n", i);\n    printf("float: %.2f\\n", f);\n    printf("char: %c\\n", c);\n    \n    return 0;\n}\n`} stdin="42\n3.14\nA" time="O(1)" space="O(1)" />
+
+| Specifier | Reads | Variable type |
+|-----------|-------|---------------|
+| `%d` | Integer | `int` |
+| `%f` | Float | `float` |
+| `%lf` | Double | `double` |
+| `%c` | Single character | `char` |
+| `%s` | Word (until whitespace) | `char[]` (array) |
+| `%ld` | Long integer | `long` |
+
+<Callout type="info">
+Notice the space before `%c` in `scanf(" %c", &c)`. This tells `scanf` to skip any whitespace (including the newline left over from the previous `scanf`). Without it, `scanf` would read the newline character instead of waiting for new input.
+</Callout>
+
+## Reading Multiple Values
+
+You can read multiple values in one `scanf` call:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int x, y;\n    \n    printf("Enter two numbers: ");\n    scanf("%d %d", &x, &y);\n    \n    printf("Sum: %d\\n", x + y);\n    printf("Product: %d\\n", x * y);\n    \n    return 0;\n}\n`} stdin="12 8" time="O(1)" space="O(1)" />
+
+The space between `%d %d` in the format string matches any whitespace (spaces, tabs, newlines) between the two numbers in the input.
+
+## scanf Return Value
+
+`scanf` returns the number of items successfully read. This is useful for error checking:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    int n;\n    int result = scanf("%d", &n);\n    \n    if (result == 1) {\n        printf("Read: %d\\n", n);\n    } else {\n        printf("Invalid input\\n");\n    }\n    \n    return 0;\n}\n`} stdin="42" time="O(1)" space="O(1)" />
+
+## Character I/O: getchar and putchar
+
+Before `scanf`, C had an even simpler way to read input: one character at a time. `getchar()` reads a single character from stdin, and `putchar()` writes one to stdout:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // Count the characters in input\n    int count = 0;\n    int ch;  // Must be int, not char!\n    \n    while ((ch = getchar()) != EOF) {\n        count++;\n    }\n    \n    printf("Read %d characters\\n", count);\n    return 0;\n}\n`} stdin="Hello, world!" time="O(n)" space="O(1)" />
+
+<Callout type="warning">
+`getchar()` returns `int`, not `char`. Why? Because it needs to return every possible character value (0-255) **plus** a special `EOF` value (-1) to signal end-of-input. If you store it in a `char`, you can't distinguish `EOF` from a valid character.
+</Callout>
+
+The pattern `while ((ch = getchar()) != EOF)` is classic C. It reads one character, assigns it to `ch`, and checks if it's the end of input — all in one expression. This character-at-a-time style is the foundation of many Unix text-processing tools.
+
+`putchar(c)` is the output counterpart — it writes a single character. It's equivalent to `printf("%c", c)` but faster since there's no format string to parse.
+
+## Common Pitfalls
+
+### Pitfall 1: Buffer overflow with %s
+
+`%s` reads characters until whitespace, with no length limit. This can overflow your buffer:
+
+```c
+char name[10];
+scanf("%s", name);  // If user types 20+ characters: CRASH
+```
+
+The safe version limits the read length:
+```c
+scanf("%9s", name);  // Read at most 9 chars (leave room for \0)
+```
+
+### Pitfall 2: Leftover newline
+
+When you read a number with `%d`, the newline character from pressing Enter stays in the input buffer. A subsequent `%c` will read that newline:
+
+```c
+int n;
+char c;
+scanf("%d", &n);   // Reads the number, leaves \n in buffer
+scanf("%c", &c);   // Reads \n, not what you wanted!
+scanf(" %c", &c);  // Fix: space before %c skips whitespace
+```
+
+### Pitfall 3: Infinite loop on bad input
+
+If the user enters text when `scanf` expects a number, `scanf` fails but doesn't consume the bad input. Calling `scanf` again reads the same bad input forever.
+
+## Exercise: Simple Calculator
+
+<Exercise
+  title="Two-number calculator"
+  description="Read two integers from stdin (on separate lines). Print their sum, difference, product, and quotient (integer division), each on a separate line in the format 'sum: N'."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int a, b;\n    scanf("%d", &a);\n    scanf("%d", &b);\n    \n    // Print sum, difference, product, quotient\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "20\n4", expected_stdout: "sum: 24\ndifference: 16\nproduct: 80\nquotient: 5\n" },
+    { stdin: "7\n2", expected_stdout: "sum: 9\ndifference: 5\nproduct: 14\nquotient: 3\n" },
+    { stdin: "0\n5", expected_stdout: "sum: 5\ndifference: -5\nproduct: 0\nquotient: 0\n" }
+  ]}
+  hints={[
+    "Use printf(\"sum: %d\\n\", a + b); for each operation.",
+    "Integer division truncates toward zero: 7 / 2 = 3."
+  ]}
+/>
+
+## Exercise: Rectangle Calculator
+
+<Exercise
+  title="Rectangle area and perimeter"
+  description="Read the width and height of a rectangle (two integers on separate lines). Print its area and perimeter on separate lines."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int width, height;\n    scanf("%d", &width);\n    scanf("%d", &height);\n    \n    // Print area and perimeter\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5\n3", expected_stdout: "area: 15\nperimeter: 16\n" },
+    { stdin: "10\n10", expected_stdout: "area: 100\nperimeter: 40\n" },
+    { stdin: "1\n7", expected_stdout: "area: 7\nperimeter: 16\n" }
+  ]}
+  hints={[
+    "Area = width * height",
+    "Perimeter = 2 * (width + height)"
+  ]}
+/>
+
+## Exercise: Circle Calculations
+
+<Exercise
+  title="Circle from radius"
+  description="Read an integer radius from stdin. Print the circumference and area of the circle, each on its own line with 2 decimal places. Use 3.14159 for pi."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    int radius;\n    scanf("%d", &radius);\n    \n    double pi = 3.14159;\n    \n    // Print circumference (2 * pi * r) and area (pi * r * r)\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5", expected_stdout: "circumference: 31.42\narea: 78.54\n" },
+    { stdin: "1", expected_stdout: "circumference: 6.28\narea: 3.14\n" },
+    { stdin: "10", expected_stdout: "circumference: 62.83\narea: 314.16\n" }
+  ]}
+  hints={[
+    "Circumference = 2 * pi * radius. Area = pi * radius * radius.",
+    "Use printf(\"circumference: %.2f\\n\", 2 * pi * radius);"
+  ]}
+/>
+
+## What's Next
+
+You can now read input and produce output. Next we'll learn **conditionals** — `if`, `else`, and `switch` — to make programs that make decisions.

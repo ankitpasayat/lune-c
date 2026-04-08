@@ -1,0 +1,354 @@
+---
+title: "Pipes and Redirection"
+module: "System Calls & Processes"
+order: 4
+description: "Creating pipes between processes, I/O redirection, and dup2 for connecting processes."
+difficulty: "advanced"
+---
+
+Pipes are the plumbing of Unix. They connect the output of one process to the input of another, creating data pipelines from simple commands. This idea — small programs that do one thing well, connected by pipes — is the heart of the Unix philosophy.
+
+## The Plumbing Analogy
+
+Think of each process as a box with an input faucet (stdin) and an output drain (stdout). A pipe is a tube connecting one box's drain to the next box's faucet. Data flows in one direction through the tube.
+
+In the shell, the `|` character creates this plumbing:
+
+```bash
+ls -la | grep ".c" | wc -l
+```
+
+Three processes run simultaneously. `ls` writes filenames to its stdout, which flows through a pipe into `grep`'s stdin. `grep` filters lines and writes matches to *its* stdout, which flows through another pipe into `wc`'s stdin. Each process only knows about its own stdin and stdout — it has no idea it's part of a pipeline.
+
+## Why Pipes Are Unidirectional
+
+Pipes carry data in one direction: from writer to reader. Why not bidirectional? Because unidirectional streams are far simpler to reason about. There's no confusion about who's reading and who's writing, no risk of deadlock from both sides trying to read simultaneously. If you need two-way communication, use two pipes (one for each direction) or a socket.
+
+## pipe() System Call
+
+`pipe()` creates a pair of connected file descriptors — one for reading, one for writing. Anything written to the write end can be read from the read end. It's an in-memory byte stream managed by the kernel.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+int main() {
+    int pipefd[2];
+    // pipefd[0] = read end
+    // pipefd[1] = write end
+
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return 1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child: write to pipe
+        close(pipefd[0]);  // Close unused read end
+
+        const char *msg = "Hello from child!";
+        write(pipefd[1], msg, strlen(msg));
+        close(pipefd[1]);  // Signal EOF
+        _exit(0);
+    }
+
+    // Parent: read from pipe
+    close(pipefd[1]);  // Close unused write end
+
+    char buf[256] = {0};
+    ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
+    close(pipefd[0]);
+
+    printf("Parent received: %s (%zd bytes)\\n", buf, n);
+
+    waitpid(pid, NULL, 0);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Why You Must Close Unused Pipe Ends
+
+This is a detail that trips up everyone at first, but it's critical: **always close the end of the pipe you're not using.**
+
+Here's why. When a process reads from a pipe, `read()` blocks until either data arrives or **all** write ends are closed (which signals EOF). After `fork()`, both parent and child have copies of both file descriptors. If the parent forgets to close its copy of the write end, the child's `read()` will never see EOF — even after the child's own writes are done — because the kernel sees that the write end is still open (in the parent).
+
+<Callout type="info">
+Always close the unused end of a pipe. If the write end isn't closed, the reader will hang waiting for more data (it relies on EOF to know writing is done).
+</Callout>
+
+## dup2(): The Elegance of I/O Redirection
+
+`dup2(oldfd, newfd)` is a simple but powerful system call: it makes `newfd` refer to the same underlying resource as `oldfd`. If `newfd` was already open, it's silently closed first.
+
+Why is this elegant? Because programs write to stdout (fd 1) without knowing — or caring — where it goes. By calling `dup2(pipe_write_end, 1)`, you redirect stdout to the pipe. The program still calls `printf()` as usual, but its output flows into the pipe instead of the terminal.
+
+This is how the shell implements `>` (redirect to file) and `|` (pipe between commands).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int main() {
+    // dup2 can redirect stdout to a file:
+    // int fd = open("output.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    // dup2(fd, STDOUT_FILENO);  // stdout now goes to file
+    // printf("This goes to the file!\\n");
+
+    printf("=== dup2 Concept ===\\n\\n");
+    printf("dup2(oldfd, newfd) makes newfd a copy of oldfd\\n\\n");
+
+    printf("Common patterns:\\n");
+    printf("  dup2(fd, 0) - redirect stdin from file\\n");
+    printf("  dup2(fd, 1) - redirect stdout to file\\n");
+    printf("  dup2(fd, 2) - redirect stderr to file\\n\\n");
+
+    printf("Pipe + dup2 for 'cmd1 | cmd2':\\n");
+    printf("  pipe(pipefd)\\n");
+    printf("  fork() child1:\\n");
+    printf("    dup2(pipefd[1], STDOUT_FILENO)\\n");
+    printf("    exec(cmd1)\\n");
+    printf("  fork() child2:\\n");
+    printf("    dup2(pipefd[0], STDIN_FILENO)\\n");
+    printf("    exec(cmd2)\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## How Shell Pipes Actually Work: fork + dup2 + exec
+
+When you type `ls | wc -l` in a shell, here's exactly what happens:
+
+1. The shell calls `pipe()` to create a pipe
+2. The shell forks **child 1** (for `ls`):
+   - Close the read end of the pipe (child 1 doesn't need it)
+   - `dup2(pipefd[1], STDOUT_FILENO)` — redirect stdout to the pipe's write end
+   - Close `pipefd[1]` (stdout is now the pipe, the extra fd is redundant)
+   - `exec("ls")` — ls writes to stdout, which is actually the pipe
+3. The shell forks **child 2** (for `wc`):
+   - Close the write end (child 2 doesn't need it)
+   - `dup2(pipefd[0], STDIN_FILENO)` — redirect stdin from the pipe's read end
+   - Close `pipefd[0]`
+   - `exec("wc", "-l")` — wc reads from stdin, which is actually the pipe
+4. The shell closes **both** ends of the pipe (it's not reading or writing)
+5. The shell waits for both children
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+// This demonstrates "ls | wc -l" using pipe + fork + exec
+int main() {
+    int pipefd[2];
+    pipe(pipefd);
+
+    // First child: runs "ls" with stdout → pipe
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execlp("ls", "ls", NULL);
+        perror("exec ls");
+        _exit(1);
+    }
+
+    // Second child: runs "wc -l" with stdin ← pipe
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(pipefd[1]);
+        dup2(pipefd[0], STDIN_FILENO);
+        close(pipefd[0]);
+        execlp("wc", "wc", "-l", NULL);
+        perror("exec wc");
+        _exit(1);
+    }
+
+    // Parent: close both ends and wait
+    close(pipefd[0]);
+    close(pipefd[1]);
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+The parent must close **both** ends of the pipe. Otherwise, the reading process won't receive EOF and will hang forever.
+</Callout>
+
+## popen(): The Quick-and-Dirty Pipe
+
+For simple cases where you just want to run a command and read its output (or write to its input), `popen()` wraps `pipe + fork + exec` into a single call. It returns a `FILE*` you can use with `fgets()` or `fprintf()`.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // popen runs a command and gives us a FILE* to read/write
+    FILE *fp = popen("echo 'Hello from popen!'", "r");
+    if (fp == NULL) {
+        perror("popen");
+        return 1;
+    }
+
+    char buf[256];
+    while (fgets(buf, sizeof(buf), fp) != NULL) {
+        printf("Got: %s", buf);
+    }
+
+    int status = pclose(fp);
+    printf("Command exited with status: %d\\n", status / 256);
+
+    // Another example: read output of 'ls'
+    fp = popen("ls /tmp 2>/dev/null | head -5", "r");
+    if (fp) {
+        printf("\\nFirst 5 files in /tmp:\\n");
+        while (fgets(buf, sizeof(buf), fp)) {
+            printf("  %s", buf);
+        }
+        pclose(fp);
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+`popen()` is convenient but limited — you can only read *or* write, not both. For bidirectional communication, you need two pipes or a socket.
+
+## Named Pipes (FIFOs)
+
+Regular pipes are anonymous — they only exist as file descriptors inherited across `fork()`. **Named pipes** (FIFOs) exist as entries in the filesystem, allowing completely unrelated processes to communicate:
+
+```bash
+# Create a named pipe
+mkfifo /tmp/my_pipe
+
+# Terminal 1: write to pipe
+echo "Hello" > /tmp/my_pipe
+
+# Terminal 2: read from pipe
+cat /tmp/my_pipe  # prints "Hello"
+```
+
+```c
+#include <sys/stat.h>
+mkfifo("/tmp/my_pipe", 0644);  // Create named pipe from C
+```
+
+This is useful for inter-process communication between programs that weren't started by the same parent.
+
+## Exercise: Pipe Simulation
+
+<Exercise
+  title="Pipeline simulator"
+  description="Read N strings (one per line after the count). Simulate a pipeline: take the output of each 'stage' as input to the next. Each stage converts to uppercase. For simplicity, just read the strings and print them in uppercase."
+  starterCode={`#include <stdio.h>
+#include <ctype.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    getchar();
+
+    for (int i = 0; i < n; i++) {
+        char line[256];
+        fgets(line, sizeof(line), stdin);
+        line[strcspn(line, "\\n")] = '\\0';
+
+        for (int j = 0; line[j]; j++) {
+            line[j] = toupper(line[j]);
+        }
+        printf("%s\\n", line);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nhello world\nfoo bar\npipe test", expected_stdout: "HELLO WORLD\nFOO BAR\nPIPE TEST\n" },
+    { stdin: "1\nabc", expected_stdout: "ABC\n" },
+    { stdin: "2\nHello\nWorld", expected_stdout: "HELLO\nWORLD\n" }
+  ]}
+  hints={[
+    "Use toupper() from <ctype.h> to convert each character.",
+    "Process each line independently — like stages in a pipeline.",
+    "In a real pipe, each stage would be a separate process."
+  ]}
+/>
+
+## Exercise: File Descriptor Table
+
+<Exercise
+  title="FD table tracker"
+  description="Simulate a file descriptor table. Read N operations: 'open X' assigns the lowest available fd (starting from 3, since 0-2 are reserved) and prints 'opened X as fd N'. 'close N' frees that fd and prints 'closed fd N'. 'list' prints all open fds."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_FDS 20
+
+int main() {
+    char names[MAX_FDS][64];
+    int used[MAX_FDS] = {0};
+
+    // fd 0, 1, 2 are pre-allocated
+    strcpy(names[0], "stdin");  used[0] = 1;
+    strcpy(names[1], "stdout"); used[1] = 1;
+    strcpy(names[2], "stderr"); used[2] = 1;
+
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char op[10];
+        scanf("%s", op);
+
+        if (strcmp(op, "open") == 0) {
+            char name[64];
+            scanf("%s", name);
+            // Find lowest available fd
+            for (int fd = 3; fd < MAX_FDS; fd++) {
+                if (!used[fd]) {
+                    used[fd] = 1;
+                    strcpy(names[fd], name);
+                    printf("opened %s as fd %d\\n", name, fd);
+                    break;
+                }
+            }
+        } else if (strcmp(op, "close") == 0) {
+            int fd;
+            scanf("%d", &fd);
+            if (fd >= 3 && fd < MAX_FDS && used[fd]) {
+                used[fd] = 0;
+                printf("closed fd %d\\n", fd);
+            }
+        } else if (strcmp(op, "list") == 0) {
+            for (int fd = 0; fd < MAX_FDS; fd++) {
+                if (used[fd]) {
+                    printf("fd %d: %s\\n", fd, names[fd]);
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nopen file.txt\nopen log.txt\nclose 3\nlist", expected_stdout: "opened file.txt as fd 3\nopened log.txt as fd 4\nclosed fd 3\nfd 0: stdin\nfd 1: stdout\nfd 2: stderr\nfd 4: log.txt\n" },
+    { stdin: "3\nopen a.c\nopen b.c\nopen c.c", expected_stdout: "opened a.c as fd 3\nopened b.c as fd 4\nopened c.c as fd 5\n" }
+  ]}
+  hints={[
+    "File descriptors 0, 1, 2 are always stdin, stdout, stderr.",
+    "New opens get the lowest available fd starting from 3.",
+    "When a fd is closed, it becomes available for reuse."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next up: **threads and concurrency** — running multiple tasks in parallel within a single process.

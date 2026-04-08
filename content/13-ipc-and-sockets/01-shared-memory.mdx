@@ -1,0 +1,344 @@
+---
+title: "Shared Memory"
+module: "IPC & Sockets"
+order: 1
+description: "POSIX shared memory and memory-mapped files for fast inter-process communication."
+difficulty: "advanced"
+---
+
+Every IPC mechanism we've seen so far — pipes, signals, message queues — has one thing in common: data passes through the kernel. Your process writes bytes into a kernel buffer, and the other process reads bytes out of it. The kernel acts as a middleman, copying data between user space and kernel space, sometimes twice.
+
+Shared memory eliminates the middleman entirely.
+
+## The Shared Whiteboard Analogy
+
+Imagine two people in separate rooms who need to collaborate. With pipes or message queues, they slide notes under the door — a guard (the kernel) picks up each note, walks it to the other room, and delivers it. It works, but every message takes a round trip through the guard.
+
+Now imagine cutting a window between the two rooms and mounting a whiteboard in it. Both people can read and write directly on the whiteboard — no guard needed. That's shared memory. The operating system sets up a region of physical RAM that appears in both processes' address spaces. After the initial setup (which does involve the kernel), all data transfer is just regular memory reads and writes — the fastest operations a CPU can do.
+
+This is why shared memory is the fastest IPC mechanism. There's no `read()` system call, no `write()` system call, no kernel buffer, no data copying. One process writes to a pointer, and the other process sees the change immediately because they're looking at the same physical memory.
+
+## IPC Methods Overview
+
+| Method | Speed | Complexity | Use Case |
+|--------|-------|------------|----------|
+| Pipes | Medium | Low | Parent-child, streaming |
+| Shared Memory | Fastest | Medium | Large data, low latency |
+| Message Queues | Medium | Medium | Structured messages |
+| Sockets | Slower | High | Network/cross-machine |
+| Signals | Fast | Low | Simple notifications |
+
+The speed difference matters most when you're transferring large amounts of data. Sending a 100-byte message through a pipe is fine — the kernel overhead is negligible. But transferring a 10 MB video frame 60 times per second? The copy overhead through the kernel becomes a bottleneck. Shared memory lets both processes access that frame buffer directly.
+
+## POSIX Shared Memory
+
+The POSIX shared memory API involves three steps that map directly to our whiteboard analogy:
+
+1. **`shm_open()`** — Create or open a named shared memory object. This is like installing the whiteboard and giving it a label so both rooms can find it. The name lives in a special `/dev/shm/` filesystem.
+
+2. **`ftruncate()`** — Set the size of the shared memory region. The whiteboard needs to be a specific size before anyone can write on it.
+
+3. **`mmap()`** — Map the shared memory into your process's address space. This is each person positioning themselves at the window so they can reach the whiteboard. After this call, you get back a regular pointer — you can read and write to it just like any other memory.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    const char *name = "/my_shm";
+    const int SIZE = 4096;
+
+    // Create shared memory object
+    int fd = shm_open(name, O_CREAT | O_RDWR, 0666);
+    if (fd == -1) {
+        perror("shm_open");
+        return 1;
+    }
+
+    // Set size
+    ftruncate(fd, SIZE);
+
+    // Map into address space
+    char *ptr = mmap(NULL, SIZE, PROT_READ | PROT_WRITE,
+                     MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        perror("mmap");
+        return 1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child: write to shared memory
+        sprintf(ptr, "Hello from child process (PID %d)!", getpid());
+        printf("Child wrote to shared memory\\n");
+        munmap(ptr, SIZE);
+        _exit(0);
+    }
+
+    // Parent: wait for child, then read
+    waitpid(pid, NULL, 0);
+    printf("Parent read from shared memory: %s\\n", ptr);
+
+    // Cleanup
+    munmap(ptr, SIZE);
+    shm_unlink(name);
+
+    return 0;
+}
+`} time="O(1)" space="O(n)" />
+
+Notice how after `mmap()`, the code uses `ptr` like any normal pointer — `sprintf(ptr, ...)` in the child, and reading `ptr` in the parent. There's no `write()` or `read()` system call. The data transfer is invisible because it's literally the same memory.
+
+The cleanup phase is important too: `munmap()` removes the mapping from your process (like stepping away from the whiteboard), and `shm_unlink()` destroys the shared memory object itself (removing the whiteboard). If you forget `shm_unlink()`, the shared memory persists in `/dev/shm/` until the system reboots.
+
+<Callout type="warning">
+Shared memory requires **synchronization** (mutexes or semaphores) when multiple processes read and write. Without it, you get the same data races as with threads.
+</Callout>
+
+This is the critical tradeoff. The whiteboard analogy actually reveals the problem: what happens if both people try to write on the same spot at the same time? You get garbled text. Shared memory gives you raw speed, but you must add your own coordination — typically POSIX semaphores or mutexes placed *in* the shared memory region itself. This is the same concurrency problem you encounter with threads, because the underlying mechanism is the same: multiple execution contexts accessing the same memory.
+
+## POSIX vs System V Shared Memory
+
+You'll see two different shared memory APIs in Unix systems. POSIX shared memory (what we used above) is the modern approach — it uses `shm_open()`, file-descriptor-based operations, and names like `/my_shm`. System V shared memory is the older approach — it uses `shmget()`, `shmat()`, and integer keys. Both accomplish the same thing, but POSIX is cleaner and more consistent with the rest of the POSIX API. Use POSIX for new code unless you're maintaining a legacy system.
+
+## Memory-Mapped Files (mmap)
+
+Shared memory is actually a special case of a more general concept: memory-mapped files. The `mmap()` system call can map *any* file into memory, not just shared memory objects. When you do this, reading from the mapped pointer reads from the file, and writing to the pointer writes to the file — the kernel handles flushing changes to disk in the background.
+
+Think of it as the kernel saying: "Don't bother with `read()` and `write()`. I'll make this file appear as if it's already in your memory. Just use pointers." The kernel uses its virtual memory system — the same page fault mechanism that powers swap — to load file pages on demand and write dirty pages back.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// mmap concept demo — in practice you'd use:
+// #include <sys/mman.h>
+// int fd = open("data.bin", O_RDWR);
+// void *map = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+// ... use map like a regular pointer ...
+// munmap(map, size);
+
+int main() {
+    printf("=== Memory-Mapped Files ===\\n\\n");
+
+    printf("mmap() maps a file into process memory:\\n");
+    printf("  void *map = mmap(addr, length, prot, flags, fd, offset)\\n\\n");
+
+    printf("Protection flags:\\n");
+    printf("  PROT_READ  - pages can be read\\n");
+    printf("  PROT_WRITE - pages can be written\\n");
+    printf("  PROT_EXEC  - pages can be executed\\n\\n");
+
+    printf("Mapping flags:\\n");
+    printf("  MAP_SHARED  - changes visible to other processes\\n");
+    printf("  MAP_PRIVATE - copy-on-write (changes are private)\\n\\n");
+
+    printf("Advantages over read()/write():\\n");
+    printf("  - No extra copy between kernel and user space\\n");
+    printf("  - Kernel handles caching and page faults\\n");
+    printf("  - Can map files larger than RAM (paged in on demand)\\n");
+    printf("  - Multiple processes can share the same mapping\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The key insight is the `flags` parameter. `MAP_SHARED` means changes are visible to other processes that map the same file — this is how multiple processes can communicate through a regular file without any explicit IPC setup. `MAP_PRIVATE` creates a copy-on-write mapping — you see the file contents, but your writes are private and never touch the original file. This is how the kernel loads program executables: it maps the binary with `MAP_PRIVATE` so each process gets its own writable copy of data sections without duplicating the read-only code.
+
+## Anonymous mmap
+
+You can also create shared memory without any file at all, using `MAP_ANONYMOUS`. This creates a region of shared memory that exists only in RAM — no name, no file, no `/dev/shm/` entry. The limitation is that only parent and child processes (after `fork()`) can share it, because there's no name for an unrelated process to find it.
+
+This is the simplest form of shared memory — perfect when you just need a parent and child to share a buffer:
+
+```c
+// Create anonymous shared mapping
+void *shared = mmap(NULL, 4096,
+    PROT_READ | PROT_WRITE,
+    MAP_SHARED | MAP_ANONYMOUS,
+    -1, 0);
+
+// Now fork — child and parent share this memory
+pid_t pid = fork();
+if (pid == 0) {
+    // Child can write to shared
+    *(int *)shared = 42;
+} else {
+    waitpid(pid, NULL, 0);
+    printf("Value: %d\n", *(int *)shared);
+}
+
+munmap(shared, 4096);
+```
+
+## When to Use Shared Memory vs Other IPC
+
+Use **shared memory** when you need maximum throughput for large data — video frames, database pages, scientific datasets. The setup is more complex, and you must handle synchronization yourself, but nothing beats direct memory access for speed.
+
+Use **pipes** when you have a simple producer-consumer flow between related processes. They're easy to use and the kernel handles all the buffering.
+
+Use **sockets** when processes might be on different machines, or when you want a clean request-response protocol. The overhead of going through the network stack is the price you pay for flexibility and portability.
+
+Use **message queues** when you need structured messages with priorities and want the kernel to handle queuing for you.
+
+## POSIX Message Queues
+
+Message queues occupy a middle ground: they're slower than shared memory (data copies through the kernel), but they provide structure that raw shared memory doesn't. Each message has boundaries — you send a message, and the receiver gets exactly that message, not a stream of bytes you have to parse. Messages also have priorities, so urgent messages can jump the queue.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// Message queue concept demo
+// Real usage:
+// #include <mqueue.h>
+// mqd_t mq = mq_open("/my_queue", O_CREAT | O_RDWR, 0644, &attr);
+// mq_send(mq, message, strlen(message), priority);
+// mq_receive(mq, buffer, max_size, &priority);
+// mq_close(mq);
+// mq_unlink("/my_queue");
+
+int main() {
+    printf("=== POSIX Message Queues ===\\n\\n");
+
+    printf("Message queues provide structured IPC:\\n\\n");
+
+    printf("Key functions:\\n");
+    printf("  mq_open()    - create/open a queue\\n");
+    printf("  mq_send()    - send a message with priority\\n");
+    printf("  mq_receive() - receive highest priority message\\n");
+    printf("  mq_close()   - close the queue\\n");
+    printf("  mq_unlink()  - remove the queue\\n\\n");
+
+    printf("vs Pipes:\\n");
+    printf("  + Messages have boundaries (no need to parse)\\n");
+    printf("  + Priority-based ordering\\n");
+    printf("  + Named (unrelated processes can communicate)\\n");
+    printf("  - Maximum message size limit\\n");
+    printf("  - Maximum queue depth limit\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Exercise: Shared Memory Simulation
+
+<Exercise
+  title="Shared buffer protocol"
+  description="Simulate shared memory communication. Read N operations: 'write X' stores string X in the buffer, 'read' prints the current buffer content (or 'EMPTY' if nothing written yet)."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char buffer[256] = "";
+    int has_data = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[10];
+        scanf("%s", op);
+
+        if (strcmp(op, "write") == 0) {
+            scanf("%s", buffer);
+            has_data = 1;
+            printf("written: %s\\n", buffer);
+        } else if (strcmp(op, "read") == 0) {
+            if (has_data) {
+                printf("read: %s\\n", buffer);
+            } else {
+                printf("EMPTY\\n");
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nread\nwrite hello\nread\nread", expected_stdout: "EMPTY\nwritten: hello\nread: hello\nread: hello\n" },
+    { stdin: "3\nwrite foo\nwrite bar\nread", expected_stdout: "written: foo\nwritten: bar\nread: bar\n" },
+    { stdin: "2\nread\nread", expected_stdout: "EMPTY\nEMPTY\n" }
+  ]}
+  hints={[
+    "Shared memory is like a buffer that persists between operations.",
+    "Write overwrites the previous value (like memcpy to shared region).",
+    "Read gets the last written value."
+  ]}
+/>
+
+## Exercise: Message Queue Simulation
+
+<Exercise
+  title="Priority message queue"
+  description="Simulate a message queue with priorities. Read N operations: 'send PRIORITY MESSAGE' adds a message, 'recv' removes and prints the highest priority message (highest number = highest priority). If empty, print 'EMPTY'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+typedef struct {
+    int priority;
+    char message[64];
+} Message;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    Message queue[100];
+    int count = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[10];
+        scanf("%s", op);
+
+        if (strcmp(op, "send") == 0) {
+            int prio;
+            char msg[64];
+            scanf("%d %s", &prio, msg);
+            queue[count].priority = prio;
+            strcpy(queue[count].message, msg);
+            count++;
+            printf("queued: [%d] %s\\n", prio, msg);
+        } else if (strcmp(op, "recv") == 0) {
+            if (count == 0) {
+                printf("EMPTY\\n");
+            } else {
+                // Find highest priority
+                int best = 0;
+                for (int j = 1; j < count; j++) {
+                    if (queue[j].priority > queue[best].priority) {
+                        best = j;
+                    }
+                }
+                printf("received: [%d] %s\\n",
+                       queue[best].priority, queue[best].message);
+                // Remove by shifting
+                for (int j = best; j < count - 1; j++) {
+                    queue[j] = queue[j + 1];
+                }
+                count--;
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\nsend 1 low\nsend 3 high\nsend 2 mid\nrecv\nrecv", expected_stdout: "queued: [1] low\nqueued: [3] high\nqueued: [2] mid\nreceived: [3] high\nreceived: [2] mid\n" },
+    { stdin: "3\nrecv\nsend 5 urgent\nrecv", expected_stdout: "EMPTY\nqueued: [5] urgent\nreceived: [5] urgent\n" }
+  ]}
+  hints={[
+    "Store messages with their priority levels.",
+    "On receive, scan all messages to find the highest priority.",
+    "Remove the selected message and shift remaining elements."
+  ]}
+/>
+
+## What's Next
+
+The most versatile IPC mechanism: **network sockets** — communicating between machines.

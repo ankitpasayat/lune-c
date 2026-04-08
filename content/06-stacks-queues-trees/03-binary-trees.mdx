@@ -1,0 +1,447 @@
+---
+title: "Binary Trees"
+module: "Stacks, Queues & Trees"
+order: 3
+description: "Hierarchical data structures — building, traversing, and understanding binary trees."
+difficulty: "intermediate"
+---
+
+A **binary tree** is a hierarchical structure where each node has at most two children: a left child and a right child. Unlike arrays and linked lists — which are *linear* (one element follows another) — trees *branch*. This branching is what makes them powerful: it lets you represent hierarchy, make decisions, and divide problems in half.
+
+You've already used trees without realizing it. A file system is a tree (folders contain subfolders). HTML is a tree (elements nest inside elements). Even the call stack of a recursive function traces out a tree when the function calls itself multiple times.
+
+## Tree Node Structure
+
+Each node holds a value and two pointers — one to its left child, one to its right child. If a child doesn't exist, the pointer is `NULL`. This is the simplest possible tree node:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct TreeNode {
+    int data;
+    struct TreeNode *left;
+    struct TreeNode *right;
+} TreeNode;
+
+TreeNode *create_node(int data) {
+    TreeNode *node = malloc(sizeof(TreeNode));
+    node->data = data;
+    node->left = NULL;
+    node->right = NULL;
+    return node;
+}
+
+int main() {
+    //       1
+    //      / \\
+    //     2   3
+    //    / \\
+    //   4   5
+
+    TreeNode *root = create_node(1);
+    root->left = create_node(2);
+    root->right = create_node(3);
+    root->left->left = create_node(4);
+    root->left->right = create_node(5);
+
+    printf("Root: %d\\n", root->data);
+    printf("Left child: %d\\n", root->left->data);
+    printf("Right child: %d\\n", root->right->data);
+
+    // Free all nodes
+    free(root->left->left);
+    free(root->left->right);
+    free(root->left);
+    free(root->right);
+    free(root);
+
+    return 0;
+}
+`} time="O(1)" space="O(n)" />
+
+Notice how we build the tree manually — `root->left->left = create_node(4)` says "the left child of the left child of root is 4." This is tedious for large trees. Later, binary search trees will insert nodes automatically based on their values.
+
+## Tree Terminology
+
+| Term | Meaning |
+|------|---------|
+| **Root** | The topmost node (no parent) |
+| **Leaf** | A node with no children |
+| **Height** | Longest path from root to a leaf |
+| **Depth** | Distance from root to a node |
+| **Subtree** | A node and all its descendants |
+
+The most important mental model: **every node is the root of its own subtree.** Node 2 in the tree above is the root of a subtree containing {2, 4, 5}. This is why recursion works so naturally on trees — you solve the problem for the current node by solving it for its left and right subtrees.
+
+## Thinking Recursively About Trees
+
+Recursion and trees are natural partners. Here's why: the definition of a binary tree is *itself recursive*. A binary tree is either:
+- Empty (NULL), or
+- A node with a left **binary tree** and a right **binary tree**
+
+This recursive definition leads directly to recursive code. Almost every tree function follows this pattern:
+
+```c
+int tree_function(TreeNode *node) {
+    if (node == NULL) return BASE_CASE;  // empty tree
+    
+    // Do something with node->data
+    // Recurse on node->left and node->right
+    // Combine results
+}
+```
+
+The base case handles the empty tree (NULL). The recursive case trusts that `tree_function(node->left)` correctly handles the entire left subtree — you don't need to think about what's inside it. This is the "leap of faith" in recursion: define what happens for one node, trust the recursion for the rest.
+
+## Tree Traversals — And WHY Each One Exists
+
+There are three classic ways to visit every node. They all visit the same nodes — the difference is *when* you process the current node relative to its children. Each order turns out to be the natural fit for a different class of problems.
+
+### In-Order (Left, Root, Right)
+
+Visit the left subtree, then the current node, then the right subtree.
+
+**Why does this matter?** For a binary search tree (where left < root < right), in-order traversal visits nodes in sorted order. That's not a coincidence — it's a direct consequence of the definition. If everything on the left is smaller and everything on the right is larger, visiting left-then-root-then-right produces ascending order.
+
+### Pre-Order (Root, Left, Right)
+
+Visit the current node first, then its children.
+
+**When is this useful?** Pre-order captures the *structure* of the tree. If you want to serialize a tree (save it to a file) or copy it, pre-order gives you the node before its descendants — exactly the order you'd need to recreate the tree by inserting from top to bottom.
+
+### Post-Order (Left, Right, Root)
+
+Visit children first, then the current node.
+
+**When is this useful?** When you need to process children before their parent. The most important example: **freeing a tree.** You must free children before freeing the parent — otherwise you lose the pointers to the children and leak memory. Post-order guarantees children are handled first.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct TreeNode {
+    int data;
+    struct TreeNode *left;
+    struct TreeNode *right;
+} TreeNode;
+
+TreeNode *create_node(int d) {
+    TreeNode *n = malloc(sizeof(TreeNode));
+    n->data = d; n->left = NULL; n->right = NULL;
+    return n;
+}
+
+void inorder(TreeNode *node) {
+    if (node == NULL) return;
+    inorder(node->left);
+    printf("%d ", node->data);
+    inorder(node->right);
+}
+
+void preorder(TreeNode *node) {
+    if (node == NULL) return;
+    printf("%d ", node->data);
+    preorder(node->left);
+    preorder(node->right);
+}
+
+void postorder(TreeNode *node) {
+    if (node == NULL) return;
+    postorder(node->left);
+    postorder(node->right);
+    printf("%d ", node->data);
+}
+
+void free_tree(TreeNode *node) {
+    if (node == NULL) return;
+    free_tree(node->left);
+    free_tree(node->right);
+    free(node);
+}
+
+int main() {
+    //       1
+    //      / \\
+    //     2   3
+    //    / \\
+    //   4   5
+
+    TreeNode *root = create_node(1);
+    root->left = create_node(2);
+    root->right = create_node(3);
+    root->left->left = create_node(4);
+    root->left->right = create_node(5);
+
+    printf("In-order:   ");
+    inorder(root);
+    printf("\\n");
+
+    printf("Pre-order:  ");
+    preorder(root);
+    printf("\\n");
+
+    printf("Post-order: ");
+    postorder(root);
+    printf("\\n");
+
+    free_tree(root);
+    return 0;
+}
+`} time="O(n)" space="O(h) recursion stack" />
+
+Trace through the in-order traversal on the tree above to convince yourself. Starting at node 1, we first recurse left to node 2, then left again to node 4. Node 4 has no left child (returns), so we print 4, then check for a right child (none). Back to node 2: print 2. Then recurse right to node 5: print 5. Back to node 1: print 1. Then recurse right to node 3: print 3. Result: `4 2 5 1 3`.
+
+<Callout type="info">
+**In-order**: Left → Root → Right. For binary search trees, this visits nodes in sorted order.
+**Pre-order**: Root → Left → Right. Useful for copying a tree.
+**Post-order**: Left → Right → Root. Useful for deleting a tree (children before parent).
+</Callout>
+
+## Tree Height
+
+The height of a tree is the longest path from root to any leaf, measured in edges. A single node has height 0. An empty tree has height -1 (by convention).
+
+The recursive insight is beautiful: **the height of a tree = 1 + max(height of left subtree, height of right subtree).** Why? The longest path from the root passes through whichever subtree is taller. The "+1" accounts for the edge from the root down to that subtree.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct TreeNode {
+    int data;
+    struct TreeNode *left;
+    struct TreeNode *right;
+} TreeNode;
+
+TreeNode *new_node(int d) {
+    TreeNode *n = malloc(sizeof(TreeNode));
+    n->data = d; n->left = NULL; n->right = NULL;
+    return n;
+}
+
+int height(TreeNode *node) {
+    if (node == NULL) return -1;  // empty tree has height -1
+    int left_h = height(node->left);
+    int right_h = height(node->right);
+    return 1 + (left_h > right_h ? left_h : right_h);
+}
+
+int count_nodes(TreeNode *node) {
+    if (node == NULL) return 0;
+    return 1 + count_nodes(node->left) + count_nodes(node->right);
+}
+
+void free_tree(TreeNode *n) {
+    if (!n) return;
+    free_tree(n->left);
+    free_tree(n->right);
+    free(n);
+}
+
+int main() {
+    TreeNode *root = new_node(1);
+    root->left = new_node(2);
+    root->right = new_node(3);
+    root->left->left = new_node(4);
+    root->left->left->left = new_node(5);
+
+    printf("Height: %d\\n", height(root));
+    printf("Nodes: %d\\n", count_nodes(root));
+
+    free_tree(root);
+    return 0;
+}
+`} time="O(n)" space="O(h)" />
+
+`count_nodes` follows the same recursive pattern: the total is 1 (this node) + count(left subtree) + count(right subtree). The pattern is universal — most tree problems reduce to "do something with this node, combine results from subtrees."
+
+## Level-Order Traversal (BFS) — And Why a Queue?
+
+All three traversals above explore depth-first — they go as deep as possible before backtracking. But what if you want to visit nodes **level by level**, left to right — the root first, then all its children, then all grandchildren?
+
+This is called **level-order traversal** or breadth-first search (BFS). The tool that makes it work is a **queue**.
+
+Why a queue and not a stack? Think about it: when you visit a node, you want its children to be processed *after* all nodes on the current level. A queue guarantees this — children go to the back of the line, so they wait until all current-level nodes are served first.
+
+Here's the algorithm: enqueue the root. Then loop: dequeue a node, process it, enqueue its children. Because the queue is FIFO, all nodes at depth `d` are processed before any node at depth `d+1`.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct TreeNode {
+    int data;
+    struct TreeNode *left;
+    struct TreeNode *right;
+} TreeNode;
+
+TreeNode *new_node(int d) {
+    TreeNode *n = malloc(sizeof(TreeNode));
+    n->data = d; n->left = NULL; n->right = NULL;
+    return n;
+}
+
+#define MAX_Q 100
+
+void level_order(TreeNode *root) {
+    if (root == NULL) return;
+
+    TreeNode *queue[MAX_Q];
+    int front = 0, rear = 0;
+
+    queue[rear++] = root;
+
+    while (front < rear) {
+        TreeNode *node = queue[front++];
+        printf("%d ", node->data);
+
+        if (node->left) queue[rear++] = node->left;
+        if (node->right) queue[rear++] = node->right;
+    }
+    printf("\\n");
+}
+
+void free_tree(TreeNode *n) {
+    if (!n) return;
+    free_tree(n->left); free_tree(n->right); free(n);
+}
+
+int main() {
+    //       1
+    //      / \\
+    //     2   3
+    //    / \\   \\
+    //   4   5   6
+
+    TreeNode *root = new_node(1);
+    root->left = new_node(2);
+    root->right = new_node(3);
+    root->left->left = new_node(4);
+    root->left->right = new_node(5);
+    root->right->right = new_node(6);
+
+    printf("Level order: ");
+    level_order(root);
+
+    free_tree(root);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Trace through it: enqueue 1. Dequeue 1 (print it), enqueue its children 2 and 3. Dequeue 2 (print), enqueue 4 and 5. Dequeue 3 (print), enqueue 6. Then dequeue and print 4, 5, 6. Result: `1 2 3 4 5 6` — level by level.
+
+What if you used a *stack* instead of a queue? You'd get depth-first search — nodes would be processed deep-first, not level-by-level. The data structure you use to hold "what to visit next" determines the exploration order.
+
+## Exercise: Count Leaves
+
+<Exercise
+  title="Count leaf nodes"
+  description="Build the following tree from input: Read N (number of nodes, numbered 0 to N-1). Then read N lines, each with two integers L R — the left and right child of node i (-1 means no child). Node 0 is the root. Print the number of leaf nodes (nodes with no children)."
+  starterCode={`#include <stdio.h>
+
+typedef struct {
+    int left;
+    int right;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    Node tree[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d %d", &tree[i].left, &tree[i].right);
+    }
+
+    // Count nodes where both left and right are -1
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2\n3 4\n-1 -1\n-1 -1\n-1 -1", expected_stdout: "3\n" },
+    { stdin: "1\n-1 -1", expected_stdout: "1\n" },
+    { stdin: "3\n1 2\n-1 -1\n-1 -1", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "A leaf node has both left == -1 and right == -1.",
+    "Just loop through all nodes and count the leaves.",
+    "You don't need recursion for this — a simple loop works."
+  ]}
+/>
+
+## Exercise: Tree Sum
+
+<Exercise
+  title="Sum of all nodes"
+  description="Read N (number of nodes) and N node values on the next line. Then read N lines of L R (children). Print the sum of all node values."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int values[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &values[i]);
+    }
+
+    int left[100], right[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d %d", &left[i], &right[i]);
+    }
+
+    // Sum all values
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5\n1 2\n3 4\n-1 -1\n-1 -1\n-1 -1", expected_stdout: "15\n" },
+    { stdin: "1\n42\n-1 -1", expected_stdout: "42\n" },
+    { stdin: "3\n10 20 30\n1 2\n-1 -1\n-1 -1", expected_stdout: "60\n" }
+  ]}
+  hints={[
+    "The tree structure doesn't matter for a sum — just add up all values.",
+    "A simple loop: for i from 0 to n-1, sum += values[i]."
+  ]}
+/>
+
+## Exercise: In-Order from Array Tree
+
+<Exercise
+  title="In-order traversal"
+  description="Read N node values and their children (same format as above). Print the in-order traversal of the tree, space-separated. Node 0 is the root."
+  starterCode={`#include <stdio.h>
+
+int values[100], left_child[100], right_child[100];
+int n, first;
+
+void inorder(int node) {
+    if (node == -1) return;
+    // TODO: implement in-order traversal
+}
+
+int main() {
+    scanf("%d", &n);
+    for (int i = 0; i < n; i++) scanf("%d", &values[i]);
+    for (int i = 0; i < n; i++) scanf("%d %d", &left_child[i], &right_child[i]);
+
+    first = 1;
+    inorder(0);
+    printf("\\n");
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5\n1 2\n3 4\n-1 -1\n-1 -1\n-1 -1", expected_stdout: "4 2 5 1 3\n" },
+    { stdin: "1\n42\n-1 -1", expected_stdout: "42\n" },
+    { stdin: "3\n10 20 30\n1 2\n-1 -1\n-1 -1", expected_stdout: "20 10 30\n" }
+  ]}
+  hints={[
+    "In-order: recurse left, print current, recurse right.",
+    "Use the 'first' flag to handle spacing — don't print a space before the first element.",
+    "Pass left_child[node] and right_child[node] to the recursive calls."
+  ]}
+/>
+
+## What's Next
+
+Next, we specialize trees into **binary search trees** — trees that maintain a sorted order, giving us the efficiency of binary search with the flexibility of a dynamic data structure.

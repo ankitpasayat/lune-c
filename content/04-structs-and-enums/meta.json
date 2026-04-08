@@ -1,0 +1,6 @@
+{
+  "title": "Structs and Enums",
+  "order": 4,
+  "phase": 2,
+  "description": "Creating custom data types with structs, enums, typedef, unions, and bitfields."
+}

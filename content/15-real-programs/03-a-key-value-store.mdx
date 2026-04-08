@@ -1,0 +1,402 @@
+---
+title: "A Key-Value Store"
+module: "Building Real Programs"
+order: 3
+description: "Build a persistent key-value database with a hash table and file storage."
+difficulty: "advanced"
+---
+
+Let's build a simple database: store key-value pairs in memory with a hash table, and persist them to disk.
+
+## The Hash Table Core
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define TABLE_SIZE 64
+#define MAX_KEY 256
+#define MAX_VAL 1024
+
+typedef struct Entry {
+    char key[MAX_KEY];
+    char value[MAX_VAL];
+    struct Entry *next;  // Chaining for collisions
+} Entry;
+
+Entry *table[TABLE_SIZE];
+
+unsigned int hash(const char *key) {
+    unsigned int h = 5381;
+    while (*key) {
+        h = ((h << 5) + h) + (unsigned char)*key;
+        key++;
+    }
+    return h % TABLE_SIZE;
+}
+
+void db_set(const char *key, const char *value) {
+    unsigned int idx = hash(key);
+    Entry *curr = table[idx];
+
+    // Update if key exists
+    while (curr) {
+        if (strcmp(curr->key, key) == 0) {
+            strncpy(curr->value, value, MAX_VAL - 1);
+            curr->value[MAX_VAL - 1] = '\\0';
+            return;
+        }
+        curr = curr->next;
+    }
+
+    // Insert new entry
+    Entry *e = malloc(sizeof(Entry));
+    strncpy(e->key, key, MAX_KEY - 1);
+    e->key[MAX_KEY - 1] = '\\0';
+    strncpy(e->value, value, MAX_VAL - 1);
+    e->value[MAX_VAL - 1] = '\\0';
+    e->next = table[idx];
+    table[idx] = e;
+}
+
+const char *db_get(const char *key) {
+    unsigned int idx = hash(key);
+    Entry *curr = table[idx];
+    while (curr) {
+        if (strcmp(curr->key, key) == 0) return curr->value;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+int db_delete(const char *key) {
+    unsigned int idx = hash(key);
+    Entry *curr = table[idx];
+    Entry *prev = NULL;
+
+    while (curr) {
+        if (strcmp(curr->key, key) == 0) {
+            if (prev) prev->next = curr->next;
+            else table[idx] = curr->next;
+            free(curr);
+            return 1;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    return 0;
+}
+
+int main() {
+    memset(table, 0, sizeof(table));
+
+    db_set("name", "Alice");
+    db_set("age", "30");
+    db_set("city", "Portland");
+
+    printf("name = %s\\n", db_get("name"));
+    printf("age = %s\\n", db_get("age"));
+    printf("city = %s\\n", db_get("city"));
+
+    db_set("name", "Bob");  // Update
+    printf("\\nAfter update:\\n");
+    printf("name = %s\\n", db_get("name"));
+
+    db_delete("age");
+    const char *age = db_get("age");
+    printf("age = %s\\n", age ? age : "(deleted)");
+
+    return 0;
+}
+`} />
+
+## File Persistence
+
+Save the database to disk and load it back:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define TABLE_SIZE 64
+#define MAX_KEY 256
+#define MAX_VAL 1024
+
+typedef struct Entry {
+    char key[MAX_KEY];
+    char value[MAX_VAL];
+    struct Entry *next;
+} Entry;
+
+Entry *table[TABLE_SIZE];
+
+unsigned int hash(const char *key) {
+    unsigned int h = 5381;
+    while (*key) h = ((h << 5) + h) + (unsigned char)*key++;
+    return h % TABLE_SIZE;
+}
+
+void db_set(const char *key, const char *value) {
+    unsigned int idx = hash(key);
+    Entry *curr = table[idx];
+    while (curr) {
+        if (strcmp(curr->key, key) == 0) {
+            strncpy(curr->value, value, MAX_VAL - 1);
+            return;
+        }
+        curr = curr->next;
+    }
+    Entry *e = malloc(sizeof(Entry));
+    strncpy(e->key, key, MAX_KEY - 1);
+    e->key[MAX_KEY - 1] = '\\0';
+    strncpy(e->value, value, MAX_VAL - 1);
+    e->value[MAX_VAL - 1] = '\\0';
+    e->next = table[idx];
+    table[idx] = e;
+}
+
+const char *db_get(const char *key) {
+    unsigned int idx = hash(key);
+    Entry *curr = table[idx];
+    while (curr) {
+        if (strcmp(curr->key, key) == 0) return curr->value;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+// Save to a simple text format: key\\tvalue\\n
+int db_save(const char *filename) {
+    FILE *f = fopen(filename, "w");
+    if (!f) return -1;
+
+    int count = 0;
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        Entry *curr = table[i];
+        while (curr) {
+            fprintf(f, "%s\\t%s\\n", curr->key, curr->value);
+            count++;
+            curr = curr->next;
+        }
+    }
+
+    fclose(f);
+    return count;
+}
+
+// Load from file
+int db_load(const char *filename) {
+    FILE *f = fopen(filename, "r");
+    if (!f) return -1;
+
+    char line[MAX_KEY + MAX_VAL + 2];
+    int count = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        // Remove newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\\n') line[len - 1] = '\\0';
+
+        // Split on tab
+        char *tab = strchr(line, '\\t');
+        if (!tab) continue;
+
+        *tab = '\\0';
+        db_set(line, tab + 1);
+        count++;
+    }
+
+    fclose(f);
+    return count;
+}
+
+int main() {
+    memset(table, 0, sizeof(table));
+
+    // Simulate save/load cycle
+    db_set("user:1:name", "Alice");
+    db_set("user:1:email", "alice@example.com");
+    db_set("user:2:name", "Bob");
+    db_set("config:theme", "dark");
+
+    printf("Database contents:\\n");
+    printf("  user:1:name = %s\\n", db_get("user:1:name"));
+    printf("  user:1:email = %s\\n", db_get("user:1:email"));
+    printf("  user:2:name = %s\\n", db_get("user:2:name"));
+    printf("  config:theme = %s\\n", db_get("config:theme"));
+
+    // In real version: db_save("data.db") and db_load("data.db")
+    printf("\\nFile format (tab-separated):\\n");
+    printf("user:1:name\\tAlice\\n");
+    printf("user:1:email\\talice@example.com\\n");
+    printf("user:2:name\\tBob\\n");
+    printf("config:theme\\tdark\\n");
+
+    return 0;
+}
+`} />
+
+## Command Interface
+
+A REPL for interacting with the database:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// Simplified command parser for the KV store
+// Commands: SET key value, GET key, DEL key, LIST, QUIT
+
+void process_command(const char *line) {
+    char cmd[16], key[256], value[1024];
+
+    if (sscanf(line, "SET %255s %1023[^\\n]", key, value) == 2) {
+        printf("OK (set %s = %s)\\n", key, value);
+    } else if (sscanf(line, "GET %255s", key) == 1) {
+        printf("(nil) — key not found in demo\\n");
+    } else if (sscanf(line, "DEL %255s", key) == 1) {
+        printf("OK (deleted %s)\\n", key);
+    } else if (strncmp(line, "LIST", 4) == 0) {
+        printf("(empty database in demo)\\n");
+    } else if (strncmp(line, "QUIT", 4) == 0) {
+        printf("Bye!\\n");
+    } else {
+        printf("Unknown command. Use: SET key value | GET key | DEL key | LIST | QUIT\\n");
+    }
+}
+
+int main() {
+    // Simulate a session
+    const char *commands[] = {
+        "SET name Alice",
+        "SET age 30",
+        "GET name",
+        "DEL age",
+        "LIST",
+        "QUIT"
+    };
+
+    for (int i = 0; i < 6; i++) {
+        printf("db> %s\\n", commands[i]);
+        process_command(commands[i]);
+    }
+
+    return 0;
+}
+`} />
+
+## Exercise: Hash Function
+
+<Exercise
+  title="DJB2 hash"
+  description="Implement the DJB2 hash function. Read a string, compute hash = 5381, then for each character: hash = hash * 33 + c. Print the final hash modulo 1000."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char s[256];
+    scanf("%255s", s);
+
+    unsigned long hash = 5381;
+
+    // TODO: for each character c in s:
+    //   hash = hash * 33 + c
+
+    printf("%lu\\n", hash % 1000);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "403\n" },
+    { stdin: "world", expected_stdout: "752\n" },
+    { stdin: "a", expected_stdout: "678\n" },
+    { stdin: "test", expected_stdout: "556\n" }
+  ]}
+  hints={[
+    "Loop through each character: for (int i = 0; s[i]; i++)",
+    "hash = hash * 33 + s[i] — this is equivalent to (hash << 5) + hash + s[i]",
+    "Use unsigned long to avoid overflow issues."
+  ]}
+/>
+
+## Exercise: Key-Value Parser
+
+<Exercise
+  title="Parse SET/GET commands"
+  description="Read N commands. Each is either 'SET key value' or 'GET key'. Maintain up to 100 key-value pairs. For GET, print the value or '(nil)' if not found. SET overwrites existing keys."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_ENTRIES 100
+#define MAX_KEY 64
+#define MAX_VAL 256
+
+char keys[MAX_ENTRIES][MAX_KEY];
+char values[MAX_ENTRIES][MAX_VAL];
+int count = 0;
+
+void set(const char *key, const char *value) {
+    // Check if key exists
+    for (int i = 0; i < count; i++) {
+        if (strcmp(keys[i], key) == 0) {
+            strncpy(values[i], value, MAX_VAL - 1);
+            return;
+        }
+    }
+    // Add new
+    if (count < MAX_ENTRIES) {
+        strncpy(keys[count], key, MAX_KEY - 1);
+        strncpy(values[count], value, MAX_VAL - 1);
+        count++;
+    }
+}
+
+const char *get(const char *key) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(keys[i], key) == 0) return values[i];
+    }
+    return NULL;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    char line[512];
+    // consume leftover newline
+    fgets(line, sizeof(line), stdin);
+
+    for (int i = 0; i < n; i++) {
+        fgets(line, sizeof(line), stdin);
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\\n') line[len - 1] = '\\0';
+
+        char cmd[8], key[MAX_KEY], value[MAX_VAL];
+        if (sscanf(line, "%7s %63s %255[^\\n]", cmd, key, value) >= 2) {
+            if (strcmp(cmd, "SET") == 0) {
+                set(key, value);
+            } else if (strcmp(cmd, "GET") == 0) {
+                const char *v = get(key);
+                printf("%s\\n", v ? v : "(nil)");
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nSET name Alice\nSET age 30\nGET name\nGET age", expected_stdout: "Alice\n30\n" },
+    { stdin: "3\nGET missing\nSET x 42\nGET x", expected_stdout: "(nil)\n42\n" },
+    { stdin: "4\nSET a 1\nSET a 2\nSET a 3\nGET a", expected_stdout: "3\n" },
+    { stdin: "2\nSET msg hello world\nGET msg", expected_stdout: "hello world\n" }
+  ]}
+  hints={[
+    "Use sscanf to parse command, key, and value from each line.",
+    "SET has 3 parts, GET has 2. Check the command string first.",
+    "Linear scan is fine for up to 100 entries."
+  ]}
+/>
+
+## What's Next
+
+Next: building a **text editor** — handling terminal raw mode and text buffers.

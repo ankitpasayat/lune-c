@@ -1,0 +1,325 @@
+---
+title: "Bare-Metal Concepts"
+module: "Embedded & Constrained C"
+order: 3
+description: "Understand how C runs without an OS: startup code, linker scripts, and programming without stdlib."
+difficulty: "advanced"
+---
+
+On your desktop, you take an enormous amount of infrastructure for granted. When you call `printf`, the C library formats the string, the OS schedules your process, the kernel sends bytes to a terminal emulator, which renders pixels on a display server. When you call `malloc`, a complex heap allocator requests memory pages from the OS, which manages virtual memory and page tables.
+
+On a microcontroller, **none of that exists**. There's no operating system. No file system. No terminal. No virtual memory. No heap (unless you build one). Your C program is the only code running on the entire CPU. When the chip powers on, it starts executing **your** instructions, and if your code hangs, the chip hangs. There's nobody to send a SIGKILL to.
+
+This is both terrifying and liberating. You have complete control, but you must handle everything yourself — including things that happen *before* `main()` starts.
+
+## What Happens Before main()
+
+On a desktop, the OS loads your program into memory, sets up the stack, initializes the C runtime, and then calls `main()`. On bare metal, there's no OS to do any of this. The CPU itself performs only two steps after power-on:
+
+1. Load the initial stack pointer from a fixed address (usually address 0x00000000)
+2. Jump to the reset handler (the address at 0x00000004 on ARM Cortex-M)
+
+Everything else — setting up initialized variables, zeroing out globals, configuring the clock — is your responsibility. The **startup code** (usually provided by the chip vendor but important to understand) runs before `main()` and does the following:
+
+- **Copy `.data` from Flash to RAM**: Global variables with initial values (like `int x = 42;`) are stored in Flash alongside your code. But they need to live in RAM so they can be modified. The startup code copies them.
+- **Zero out `.bss` in RAM**: Global variables without an explicit initial value (like `int count;`) must start at zero per the C standard. But RAM contains whatever random data was there at power-on. The startup code zeroes the `.bss` section.
+- **Set up the system clock**: Most microcontrollers boot with a slow internal oscillator. The startup code configures the PLL and clock tree for the desired speed.
+- **Call `main()`**: Finally, after everything is set up, your code runs.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// On a desktop: the OS loads your program, sets up memory, then calls main()
+// On bare metal: YOU must set up everything
+
+// The boot sequence on a microcontroller:
+// 1. Power on / reset
+// 2. CPU loads initial stack pointer from vector table
+// 3. CPU jumps to reset handler (address in vector table)
+// 4. Reset handler runs startup code:
+//    a. Copy .data section from Flash to RAM
+//    b. Zero out .bss section in RAM
+//    c. Set up clock, PLL, etc.
+//    d. Call main()
+
+// Simplified startup code (conceptual):
+//
+// extern uint32_t _sdata, _edata, _sidata;  // Linker symbols
+// extern uint32_t _sbss, _ebss;
+//
+// void Reset_Handler(void) {
+//     // Copy initialized data from Flash (.data)
+//     uint32_t *src = &_sidata;
+//     uint32_t *dst = &_sdata;
+//     while (dst < &_edata) *dst++ = *src++;
+//
+//     // Zero out uninitialized data (.bss)
+//     dst = &_sbss;
+//     while (dst < &_ebss) *dst++ = 0;
+//
+//     // Call main
+//     main();
+//
+//     // If main returns, hang
+//     while (1) {}
+// }
+
+int main() {
+    printf("=== Bare-Metal Boot Sequence ===\\n\\n");
+
+    printf("Memory sections in a binary:\\n\\n");
+    printf("  .text   — Code (in Flash/ROM)\\n");
+    printf("  .rodata — Const data (in Flash)\\n");
+    printf("  .data   — Initialized globals (copied to RAM)\\n");
+    printf("  .bss    — Zero-initialized globals (in RAM)\\n");
+    printf("  stack   — Grows downward from top of RAM\\n\\n");
+
+    printf("Startup sequence:\\n");
+    printf("  1. CPU reads stack pointer from vector[0]\\n");
+    printf("  2. CPU jumps to reset handler at vector[1]\\n");
+    printf("  3. .data copied from Flash to RAM\\n");
+    printf("  4. .bss zeroed in RAM\\n");
+    printf("  5. main() called\\n\\n");
+
+    // Show where things end up
+    static int bss_var;              // .bss (zero-initialized)
+    static int data_var = 42;        // .data (initialized)
+    const char *rodata = "hello";    // .rodata (read-only)
+
+    printf("bss_var  (uninit static): %d\\n", bss_var);
+    printf("data_var (init static):   %d\\n", data_var);
+    printf("rodata string:            %s\\n", rodata);
+
+    return 0;
+}
+`} />
+
+## Linker Scripts: Telling the Linker Where Things Go
+
+On a desktop, the linker places your code wherever the OS wants — the OS uses virtual memory to make it all work. On bare metal, **you** must tell the linker exactly where each piece of code and data belongs in physical memory, because the addresses are real hardware addresses.
+
+A **linker script** describes the chip's memory map (where Flash and RAM are, how big they are) and the rules for placing code sections into memory regions. The linker script also defines special symbols like `_sdata` and `_ebss` that the startup code uses to know where to copy and zero.
+
+This is why bare-metal C is more involved than desktop C: you're not just writing application logic, you're defining the physical layout of your program in memory. Get it wrong and your global variables live in Flash (read-only, can't be modified), your code lives in RAM (volatile, gone after power cycle), or your stack overlaps your data.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// A linker script defines the memory map:
+//
+// MEMORY {
+//     FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 256K
+//     RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 64K
+// }
+//
+// SECTIONS {
+//     .text : {           /* Code goes in Flash */
+//         *(.text)
+//         *(.text*)
+//     } > FLASH
+//
+//     .rodata : {         /* Constants in Flash */
+//         *(.rodata)
+//         *(.rodata*)
+//     } > FLASH
+//
+//     .data : {           /* Initialized data: stored in Flash, */
+//         _sdata = .;     /* loaded to RAM at startup           */
+//         *(.data)
+//         _edata = .;
+//     } > RAM AT > FLASH
+//
+//     _sidata = LOADADDR(.data);
+//
+//     .bss : {            /* Zero-init data in RAM */
+//         _sbss = .;
+//         *(.bss)
+//         *(COMMON)
+//         _ebss = .;
+//     } > RAM
+// }
+
+int main() {
+    printf("=== Linker Script Basics ===\\n\\n");
+
+    printf("The linker script defines:\\n");
+    printf("  1. MEMORY regions (Flash, RAM, their addresses)\\n");
+    printf("  2. SECTIONS (where code/data goes)\\n");
+    printf("  3. Symbols (_sdata, _edata for startup code)\\n\\n");
+
+    printf("Typical ARM Cortex-M memory map:\\n");
+    printf("  0x00000000 - Vector table\\n");
+    printf("  0x08000000 - Flash (code + constants)\\n");
+    printf("  0x20000000 - SRAM (variables + stack)\\n\\n");
+
+    printf("The startup code uses linker symbols\\n");
+    printf("(_sdata, _edata, etc.) to know where\\n");
+    printf("to copy data and zero out BSS.\\n");
+
+    return 0;
+}
+`} />
+
+## The Superloop and Interrupt-Driven Programming
+
+Desktop programs terminate — they have a beginning, a middle, and `return 0;`. Embedded programs **run forever**. The chip stays powered and your code keeps executing until the power is cut. This gives rise to two fundamental embedded patterns:
+
+**The superloop** is the simplest: an infinite `while(1)` loop that continuously polls hardware and updates state. It's predictable and easy to reason about, but it wastes CPU cycles polling things that haven't changed and has trouble handling timing-critical events.
+
+**Interrupt-driven programming** is more efficient: the CPU sleeps (or does background work) and wakes up only when hardware fires an interrupt — a button press, a timer tick, a byte arriving on UART. The interrupt handler does the minimum necessary (reads data, sets a flag) and returns to the main loop, which processes the data at its own pace.
+
+Most real embedded systems use both: a superloop for the main application logic, with interrupts handling time-critical hardware events.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>
+#include <stddef.h>
+
+// On bare metal, you don't have printf, malloc, or even memcpy
+// You must implement what you need
+
+// Custom memcpy (no <string.h>)
+void *my_memcpy(void *dst, const void *src, size_t n) {
+    uint8_t *d = (uint8_t*)dst;
+    const uint8_t *s = (const uint8_t*)src;
+    while (n--) *d++ = *s++;
+    return dst;
+}
+
+// Custom memset
+void *my_memset(void *dst, int c, size_t n) {
+    uint8_t *d = (uint8_t*)dst;
+    while (n--) *d++ = (uint8_t)c;
+    return dst;
+}
+
+// Custom strlen
+size_t my_strlen(const char *s) {
+    size_t len = 0;
+    while (*s++) len++;
+    return len;
+}
+
+// Custom itoa (integer to string)
+void my_itoa(int val, char *buf) {
+    if (val == 0) { buf[0] = '0'; buf[1] = '\\0'; return; }
+
+    int neg = 0;
+    if (val < 0) { neg = 1; val = -val; }
+
+    char tmp[12];
+    int i = 0;
+    while (val > 0) {
+        tmp[i++] = '0' + (val % 10);
+        val /= 10;
+    }
+    if (neg) tmp[i++] = '-';
+
+    for (int j = 0; j < i; j++) buf[j] = tmp[i - 1 - j];
+    buf[i] = '\\0';
+}
+
+// Simple UART output (conceptual — just printing here)
+void uart_puts(const char *s) {
+    // On real hardware: while (*s) UART->TX = *s++;
+    printf("%s", s);
+}
+
+int main() {
+    printf("=== No-stdlib Utilities ===\\n\\n");
+
+    // Test custom functions
+    char buf[64];
+    my_memset(buf, 0, 64);
+
+    const char *src = "Hello, bare metal!";
+    my_memcpy(buf, src, my_strlen(src) + 1);
+    printf("memcpy result: %s\\n", buf);
+    printf("strlen result: %zu\\n", my_strlen(buf));
+
+    char num_buf[16];
+    my_itoa(12345, num_buf);
+    printf("itoa(12345): %s\\n", num_buf);
+
+    my_itoa(-42, num_buf);
+    printf("itoa(-42): %s\\n", num_buf);
+
+    my_itoa(0, num_buf);
+    printf("itoa(0): %s\\n", num_buf);
+
+    printf("\\nOn bare metal, you'd use uart_puts()\\n");
+    printf("instead of printf().\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+Many embedded projects use "newlib-nano" — a stripped-down C library optimized for microcontrollers. It provides basic `printf`, `malloc`, etc. with a much smaller footprint than glibc. But for the smallest systems (a few KB of Flash), even newlib-nano is too large, and you write everything yourself. The custom implementations above are what that looks like.
+</Callout>
+
+## Exercise: Custom memcpy and memset
+
+<Exercise
+  title="Implement memory utilities"
+  description="Read a command: 'FILL N val' (fill array of N bytes with val, print space-separated), 'COPY' followed by N values then M (copy first M values to new array, print space-separated). Implement without using string.h functions."
+  starterCode={`#include <stdio.h>
+#include <stdint.h>
+
+int main() {
+    char cmd[8];
+    scanf("%7s", cmd);
+
+    if (cmd[0] == 'F') {
+        int n, val;
+        scanf("%d %d", &n, &val);
+
+        uint8_t arr[256];
+        // Fill manually (no memset)
+        for (int i = 0; i < n; i++) arr[i] = (uint8_t)val;
+
+        for (int i = 0; i < n; i++) {
+            if (i > 0) printf(" ");
+            printf("%d", arr[i]);
+        }
+        printf("\\n");
+    } else {
+        int n;
+        scanf("%d", &n);
+
+        uint8_t src[256];
+        for (int i = 0; i < n; i++) {
+            int v; scanf("%d", &v);
+            src[i] = (uint8_t)v;
+        }
+
+        int m;
+        scanf("%d", &m);
+
+        uint8_t dst[256];
+        // Copy manually (no memcpy)
+        for (int i = 0; i < m; i++) dst[i] = src[i];
+
+        for (int i = 0; i < m; i++) {
+            if (i > 0) printf(" ");
+            printf("%d", dst[i]);
+        }
+        printf("\\n");
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "FILL 5 42", expected_stdout: "42 42 42 42 42\n" },
+    { stdin: "COPY 5\n10 20 30 40 50\n3", expected_stdout: "10 20 30\n" },
+    { stdin: "FILL 3 0", expected_stdout: "0 0 0\n" },
+    { stdin: "COPY 4\n1 2 3 4\n4", expected_stdout: "1 2 3 4\n" }
+  ]}
+  hints={[
+    "FILL: loop from 0 to N, setting each byte to val.",
+    "COPY: loop from 0 to M, copying src[i] to dst[i].",
+    "This is what memset and memcpy do internally."
+  ]}
+/>
+
+## What's Next
+
+Next: **State Machines** — the most common design pattern in embedded C.

@@ -1,0 +1,296 @@
+---
+title: "Sanitizers"
+module: "Debugging & Testing"
+order: 3
+description: "Use AddressSanitizer, UndefinedBehaviorSanitizer, and other compiler sanitizers to catch bugs at compile and runtime."
+difficulty: "intermediate"
+---
+
+Valgrind is powerful, but it has a fundamental limitation: it's **slow**. A 10-50x slowdown means your test suite that takes 10 seconds now takes several minutes. For fast iteration during development, you need something that catches memory bugs at closer to native speed.
+
+**Sanitizers** solve this by taking a completely different approach. While Valgrind instruments your binary *after* compilation (wrapping every memory access at runtime), sanitizers work *at compile time* — the compiler itself inserts extra checks directly into your code. This means the checking code is optimized alongside your code, resulting in only a 2x slowdown instead of 20x.
+
+The tradeoff: sanitizers catch different sets of bugs than Valgrind, and they require recompilation. They're complementary tools, not replacements. Use sanitizers during daily development for fast feedback, and run Valgrind periodically for deeper analysis.
+
+## AddressSanitizer (ASan)
+
+ASan is the workhorse. It catches the memory errors you care about most: buffer overflows (both heap and stack), use-after-free, double-free, and memory leaks. It works by placing **"red zones"** — poisoned guard bytes — around every allocation. If your code reads or writes into a red zone, ASan catches it immediately and prints a clear error message pointing to the exact source line.
+
+```
+gcc -g -fsanitize=address -o program program.c
+./program
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// AddressSanitizer catches these at runtime with
+// clear error messages pointing to exact source lines
+
+int main() {
+    printf("=== AddressSanitizer (ASan) ===\\n\\n");
+
+    printf("Compile: gcc -g -fsanitize=address program.c\\n\\n");
+
+    printf("ASan detects:\\n");
+    printf("  - Heap buffer overflow\\n");
+    printf("    int *p = malloc(10 * sizeof(int));\\n");
+    printf("    p[10] = 0;  // ASan: heap-buffer-overflow\\n\\n");
+
+    printf("  - Stack buffer overflow\\n");
+    printf("    int a[10];\\n");
+    printf("    a[10] = 0;  // ASan: stack-buffer-overflow\\n\\n");
+
+    printf("  - Use after free\\n");
+    printf("    int *p = malloc(4); free(p);\\n");
+    printf("    *p = 1;  // ASan: heap-use-after-free\\n\\n");
+
+    printf("  - Double free\\n");
+    printf("    int *p = malloc(4); free(p); free(p);\\n");
+    printf("    // ASan: attempting double-free\\n\\n");
+
+    printf("  - Memory leaks (with leak sanitizer)\\n");
+    printf("    gcc -fsanitize=address,leak\\n\\n");
+
+    printf("ASan overhead: ~2x slowdown, ~3x memory\\n");
+    printf("Much faster than Valgrind (~20x slower)\\n");
+
+    return 0;
+}
+`} />
+
+Notice what ASan catches that Valgrind doesn't: **stack buffer overflows**. Because Valgrind only instruments heap operations (`malloc`/`free`), it can't see when you overrun a local array on the stack. ASan instruments all memory, making it the better tool for stack corruption bugs.
+
+## UndefinedBehaviorSanitizer (UBSan)
+
+C has a dirty secret: dozens of common operations have **undefined behavior**, meaning the language standard says "anything can happen." The compiler is free to do whatever it wants — and it often does something that silently produces wrong answers rather than crashing.
+
+Signed integer overflow (`INT_MAX + 1`) is undefined. Shifting by more than the bit width (`1 << 33`) is undefined. Dividing by zero is undefined. None of these reliably crash — they just produce garbage values that propagate silently through your program.
+
+UBSan catches these at runtime with minimal overhead. It's practically free to enable and catches an entire class of bugs that no other tool detects:
+
+```
+gcc -g -fsanitize=undefined -o program program.c
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+// UBSan catches silent undefined behavior
+
+int main() {
+    printf("=== UndefinedBehaviorSanitizer (UBSan) ===\\n\\n");
+
+    printf("Compile: gcc -g -fsanitize=undefined program.c\\n\\n");
+
+    printf("UBSan detects:\\n\\n");
+
+    // 1. Signed integer overflow
+    printf("1. Signed integer overflow\\n");
+    printf("   INT_MAX + 1 is undefined in C\\n");
+    // int x = INT_MAX; x++; // UBSan: signed integer overflow
+    printf("   UBSan: runtime error: signed integer overflow\\n\\n");
+
+    // 2. Division by zero
+    printf("2. Division by zero\\n");
+    // int y = 42 / 0; // UBSan: division by zero
+    printf("   42 / 0 → UBSan catches it\\n\\n");
+
+    // 3. Null pointer dereference
+    printf("3. NULL dereference\\n");
+    // int *p = NULL; *p = 1; // UBSan: null pointer dereference
+    printf("   *NULL → caught before crash\\n\\n");
+
+    // 4. Shift overflow
+    printf("4. Shift overflow\\n");
+    // int z = 1 << 33;  // UBSan: shift exponent too large
+    printf("   1 << 33 (for 32-bit int) → undefined\\n\\n");
+
+    // 5. Out-of-bounds array access
+    printf("5. Array out of bounds\\n");
+    // int a[3]; a[5] = 0; // UBSan: index out of bounds
+    printf("   a[5] on int a[3] → caught\\n\\n");
+
+    // Safe demonstration
+    printf("Safe operations:\\n");
+    int a = INT_MAX;
+    printf("  INT_MAX = %d\\n", a);
+    printf("  INT_MAX / 2 = %d (safe)\\n", a / 2);
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+Combine sanitizers for maximum coverage: `gcc -g -fsanitize=address,undefined -o program program.c`. Use this for all development builds. ASan catches memory errors, UBSan catches logic errors. Together they cover most of the bugs that make C dangerous.
+</Callout>
+
+## ThreadSanitizer (TSan)
+
+Data races are the hardest bugs to find because they depend on **timing**. Two threads access the same variable, and most of the time it works fine — until one day the OS schedules them in just the wrong order, and your program corrupts data or crashes. These bugs are nearly impossible to reproduce reliably, which makes them nearly impossible to debug with traditional tools.
+
+TSan instruments every memory access and tracks which thread made it. If two threads access the same memory without synchronization and at least one is a write, TSan reports a data race — even if it didn't cause a visible problem this time.
+
+```
+gcc -g -fsanitize=thread -o program program.c -pthread
+```
+
+<Editor defaultCode={`#include <stdio.h>
+
+// ThreadSanitizer detects data races — when two threads
+// access the same memory without synchronization
+
+int main() {
+    printf("=== ThreadSanitizer (TSan) ===\\n\\n");
+
+    printf("Compile: gcc -g -fsanitize=thread -pthread program.c\\n\\n");
+
+    printf("TSan detects:\\n");
+    printf("  - Two threads writing to same variable\\n");
+    printf("  - One thread reading, another writing\\n");
+    printf("  - Missing mutex locks\\n");
+    printf("  - Lock order violations (potential deadlock)\\n\\n");
+
+    printf("Example data race:\\n");
+    printf("  int counter = 0;\\n");
+    printf("  // Thread 1: counter++\\n");
+    printf("  // Thread 2: counter++\\n");
+    printf("  // TSan: data race on 'counter'\\n\\n");
+
+    printf("Fix: use mutex or atomic operations\\n\\n");
+
+    printf("Note: Cannot combine TSan with ASan.\\n");
+    printf("Use them in separate builds.\\n");
+
+    return 0;
+}
+`} />
+
+## When to Use Which
+
+The key insight is that sanitizers and Valgrind are **complementary, not redundant**. Each tool catches things the others miss:
+
+| Tool | What it catches | What it misses | Cost |
+|------|----------------|----------------|------|
+| ASan | Heap/stack overflows, use-after-free, leaks | Uninitialized reads, UB | ~2x slowdown |
+| UBSan | Integer overflow, bad shifts, null deref | Memory errors | Minimal |
+| TSan | Data races, deadlocks | Memory errors (incompatible with ASan) | ~5-15x slowdown |
+| Valgrind | Uninitialized reads, heap errors | Stack overflows, UB | ~10-50x slowdown |
+
+A solid CI pipeline runs tests **three times**: once with ASan+UBSan (catches memory + logic bugs fast), once with TSan (catches threading bugs), and once with Valgrind (catches uninitialized reads that ASan misses). Yes, this sounds expensive — but it's vastly cheaper than debugging these bugs in production.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    printf("Sanitizer Quick Reference\\n");
+    printf("=========================\\n\\n");
+
+    printf("%-8s %-30s %s\\n", "Flag", "Detects", "Overhead");
+    printf("%-8s %-30s %s\\n", "------", "----------------------------", "--------");
+    printf("%-8s %-30s %s\\n", "-fsanitize=address",
+           "Memory errors, leaks", "2x slower");
+    printf("%-8s %-30s %s\\n", "-fsanitize=undefined",
+           "Undefined behavior", "Minimal");
+    printf("%-8s %-30s %s\\n", "-fsanitize=thread",
+           "Data races", "5-15x slower");
+    printf("%-8s %-30s %s\\n", "-fsanitize=memory",
+           "Uninitialized reads (clang)", "3x slower");
+
+    printf("\\nRecommended dev build:\\n");
+    printf("  gcc -g -O0 -fsanitize=address,undefined -Wall -Wextra\\n\\n");
+
+    printf("CI/test build:\\n");
+    printf("  Run tests once with ASan+UBSan, once with TSan\\n");
+
+    return 0;
+}
+`} />
+
+## Exercise: Identify the UB
+
+<Exercise
+  title="Fix undefined behavior"
+  description="This program reads an integer N and computes 2^N using left shift. But it has undefined behavior for certain inputs. Fix it to handle edge cases safely: if N < 0 or N > 30, print 'error'. Otherwise print the result."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    if (n < 0 || n > 30) {
+        printf("error\\n");
+        return 0;
+    }
+
+    int result = 1 << n;
+    printf("%d\\n", result);
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "1\n" },
+    { stdin: "10", expected_stdout: "1024\n" },
+    { stdin: "30", expected_stdout: "1073741824\n" },
+    { stdin: "-1", expected_stdout: "error\n" },
+    { stdin: "31", expected_stdout: "error\n" },
+    { stdin: "50", expected_stdout: "error\n" }
+  ]}
+  hints={[
+    "Shifting by negative or >= bit-width is undefined behavior.",
+    "For a 32-bit int, 1 << 31 overflows (signed). Max safe shift is 30.",
+    "Check bounds before shifting: n must be 0 to 30 inclusive."
+  ]}
+/>
+
+## Exercise: Safe String Copy
+
+<Exercise
+  title="Bounds-checked string copy"
+  description="Read a destination buffer size N and a source string. Copy at most N-1 characters from source to a buffer, always null-terminate. Print the result. If N <= 0 print 'error'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    if (n <= 0) {
+        printf("error\\n");
+        return 0;
+    }
+
+    char src[256];
+    scanf("%255s", src);
+
+    char dst[256];
+    // TODO: Copy at most n-1 chars from src to dst
+    // Always null-terminate
+
+    int len = strlen(src);
+    int copy_len = len < n - 1 ? len : n - 1;
+    memcpy(dst, src, copy_len);
+    dst[copy_len] = '\\0';
+
+    printf("%s\\n", dst);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "10\nhello", expected_stdout: "hello\n" },
+    { stdin: "3\nhello", expected_stdout: "he\n" },
+    { stdin: "1\ntest", expected_stdout: "\n" },
+    { stdin: "0\ntest", expected_stdout: "error\n" },
+    { stdin: "100\nabcdef", expected_stdout: "abcdef\n" }
+  ]}
+  hints={[
+    "Copy min(strlen(src), n-1) characters.",
+    "Always set dst[copy_len] = '\\0'.",
+    "When n = 1, copy 0 chars but still null-terminate."
+  ]}
+/>
+
+## What's Next
+
+Next: **Writing Tests** — building test harnesses and using assertions to verify your code.

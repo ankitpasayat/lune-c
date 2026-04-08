@@ -1,0 +1,6 @@
+{
+  "title": "File I/O",
+  "order": 8,
+  "phase": 3,
+  "description": "Reading and writing files — text mode, binary mode, and error handling."
+}

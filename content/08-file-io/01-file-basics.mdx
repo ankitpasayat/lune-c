@@ -1,0 +1,276 @@
+---
+title: "File Basics"
+module: "File I/O"
+order: 1
+description: "Opening, closing, and working with file pointers — fopen, fclose, and file modes."
+difficulty: "intermediate"
+---
+
+Every program you've written so far has been **amnesiac**. It reads input, does some work, prints output, and then forgets everything. The moment the process exits, all your variables — every array, every struct, every carefully computed result — vanish from RAM. Files are how programs develop a long-term memory.
+
+But what *is* a file, from C's perspective? It's not a document or a spreadsheet. It's a **stream of bytes**. That's it. A 1MB image, a 50-line text file, a database — to C, they're all the same thing: a sequence of bytes you can read from or write to, one chunk at a time.
+
+This abstraction is powerful because it's uniform. The same functions that read a file on disk can read input from the keyboard (`stdin`) or a network pipe. C doesn't care where the bytes come from. It just sees a stream.
+
+## The FILE Pointer — Your Handle to the Outside World
+
+When you open a file in C, you don't get the file's contents. You get a **pointer to a FILE struct** — an opaque handle that the C library uses internally to track everything about your open file: which byte you're currently positioned at, an internal buffer for efficiency, the file's mode (reading? writing?), error flags, and more.
+
+Think of it like a hotel front desk. You don't walk into the hotel and rummage through rooms yourself. You check in at the desk, they give you a key card (the `FILE *`), and from that point on, you use the key card for everything. The front desk tracks which room you're in, when you checked in, and whether anything has gone wrong. You don't manage those details — you just swipe the card.
+
+That's what `FILE *fp` is: your key card. The C library is the front desk. When you call `fopen`, the library sets up all the bookkeeping behind the scenes and hands you back a pointer to it. When you call `fclose`, you're returning the key card — the library flushes any remaining data and releases its resources.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // These are also FILE pointers:
+    // stdin  - standard input
+    // stdout - standard output
+    // stderr - standard error
+
+    fprintf(stdout, "This goes to stdout\\n");
+    fprintf(stderr, "This goes to stderr\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Why Three Streams: stdin, stdout, stderr
+
+Before your `main()` even runs, the C runtime opens three file streams for you. This isn't arbitrary — it reflects a fundamental design philosophy from Unix.
+
+**stdin** (standard input) is where your program reads interactive input. When you call `scanf`, it reads from `stdin`.
+
+**stdout** (standard output) is where normal output goes. `printf` writes to `stdout`. This stream is **line-buffered** by default when connected to a terminal — meaning the library accumulates output in memory and only actually sends it when it sees a newline character (or when the buffer fills up). That's why `printf("hello")` without a `\n` might not appear immediately.
+
+**stderr** (standard error) is for error messages and diagnostics. It exists as a *separate* stream so that you can redirect a program's normal output to a file while still seeing errors on screen. Crucially, `stderr` is **unbuffered** — error messages appear immediately, no waiting for a newline. When your program is crashing, you want to see the error *now*, not have it sitting in a buffer that never gets flushed.
+
+This separation is what makes Unix pipelines work: `./program > output.txt` redirects `stdout` to a file, but errors still appear in your terminal via `stderr`.
+
+## fopen and fclose
+
+Opening a file is a request to the operating system: "I'd like access to this file, for this purpose." The OS might say no — the file might not exist, you might not have permission, or the system might have too many files open already. That's why `fopen` can return `NULL`, and checking for it is not optional.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // fopen returns NULL on failure
+    FILE *fp = fopen("example.txt", "w");
+    if (fp == NULL) {
+        perror("Failed to open file");
+        return 1;
+    }
+
+    fprintf(fp, "Hello, file!\\n");
+    fprintf(fp, "Line two\\n");
+
+    fclose(fp);  // always close when done
+
+    printf("File written successfully\\n");
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Always check if `fopen` returns `NULL` — the file might not exist, the path could be wrong, or you might lack permissions. Always call `fclose` when done to flush buffers and release resources.
+</Callout>
+
+Why is `fclose` so important? Two reasons. First, when you write to a file, C doesn't actually send every byte to disk immediately. It accumulates data in an internal buffer and writes it in larger, efficient chunks. If you forget `fclose`, that buffer might never get flushed, and your file ends up truncated or empty. Second, the OS limits the number of files a process can have open simultaneously (often 1024). Leaking file handles by forgetting `fclose` will eventually crash your program.
+
+## File Modes — Telling the OS Your Intent
+
+The second argument to `fopen` is a **mode string** that declares what you intend to do with the file. This matters because the OS enforces it: if you open a file for reading, you can't write to it.
+
+| Mode | Description |
+|------|-------------|
+| `"r"` | Read (file must exist) |
+| `"w"` | Write (creates or truncates) |
+| `"a"` | Append (creates or appends) |
+| `"r+"` | Read and write (file must exist) |
+| `"w+"` | Read and write (creates or truncates) |
+| `"a+"` | Read and append |
+
+Add `"b"` for binary mode: `"rb"`, `"wb"`, etc.
+
+The dangerous one is `"w"`. It **truncates** — if the file already has content, opening it with `"w"` immediately erases everything, before you've written a single byte. This is a common source of accidental data loss. If you want to add data to an existing file, use `"a"` (append).
+
+**Text mode vs binary mode**: On most Unix systems, there's no difference. But on Windows, text mode translates `\n` to `\r\n` on write and back on read. Binary mode (`"rb"`, `"wb"`) disables this translation. For non-text data (images, structs, databases), always use binary mode, or your data will get corrupted by the translation.
+
+## Reading a File
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // First, create a file to read
+    FILE *fp = fopen("data.txt", "w");
+    if (!fp) { perror("write"); return 1; }
+    fprintf(fp, "Alice 90\\n");
+    fprintf(fp, "Bob 85\\n");
+    fprintf(fp, "Charlie 92\\n");
+    fclose(fp);
+
+    // Now read it back
+    fp = fopen("data.txt", "r");
+    if (!fp) { perror("read"); return 1; }
+
+    char name[50];
+    int score;
+    while (fscanf(fp, "%49s %d", name, &score) == 2) {
+        printf("%s scored %d\\n", name, score);
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## Reading Line by Line
+
+`fgets` reads a whole line (including the newline character). It's the workhorse function for reading text files safely, because you control exactly how many characters can be read into your buffer — no overflow possible.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    // Create a file
+    FILE *fp = fopen("lines.txt", "w");
+    fprintf(fp, "First line\\n");
+    fprintf(fp, "Second line\\n");
+    fprintf(fp, "Third line\\n");
+    fclose(fp);
+
+    // Read line by line
+    fp = fopen("lines.txt", "r");
+    if (!fp) { perror("open"); return 1; }
+
+    char line[256];
+    int linenum = 1;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        // Remove trailing newline
+        line[strcspn(line, "\\n")] = '\\0';
+        printf("Line %d: %s\\n", linenum++, line);
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+`fgets(buf, size, fp)` reads at most `size - 1` characters and adds a null terminator. It includes the newline if there's room. Use `strcspn` to strip it.
+</Callout>
+
+## Writing Methods
+
+| Function | Use for |
+|----------|---------|
+| `fprintf(fp, fmt, ...)` | Formatted output (like printf) |
+| `fputs(str, fp)` | Write a string (no formatting) |
+| `fputc(ch, fp)` | Write a single character |
+| `fwrite(buf, size, count, fp)` | Write binary data |
+
+## Exercise: Write and Read Numbers
+
+<Exercise
+  title="File round-trip"
+  description="Read N, then N integers from stdin. The program should conceptually write them to a file and read them back, but since our sandbox doesn't persist files between runs, just print each number on its own line (simulating reading from a file)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Print each number on its own line
+    for (int i = 0; i < n; i++) {
+        printf("%d\\n", arr[i]);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n10 20 30", expected_stdout: "10\n20\n30\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "4\n-1 0 1 2", expected_stdout: "-1\n0\n1\n2\n" }
+  ]}
+  hints={[
+    "Read all numbers into an array.",
+    "Print each one on its own line with printf(\"%d\\n\", ...)."
+  ]}
+/>
+
+## Exercise: Line Counter
+
+<Exercise
+  title="Count lines"
+  description="Read lines from stdin until EOF. Print the total number of lines."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    char line[1000];
+    int count = 0;
+
+    while (fgets(line, sizeof(line), stdin) != NULL) {
+        count++;
+    }
+
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello\nworld\nfoo", expected_stdout: "3\n" },
+    { stdin: "single", expected_stdout: "1\n" },
+    { stdin: "a\nb\nc\nd\ne", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "fgets returns NULL at EOF.",
+    "Each successful fgets call means one line was read.",
+    "Count the number of successful fgets calls."
+  ]}
+/>
+
+## Exercise: Character Frequency
+
+<Exercise
+  title="Character frequency"
+  description="Read a single line of text. Print the count of lowercase letters (a-z), uppercase letters (A-Z), digits (0-9), and other characters, each on its own line in that order."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char line[1000];
+    fgets(line, sizeof(line), stdin);
+
+    int lower = 0, upper = 0, digits = 0, other = 0;
+
+    for (int i = 0; line[i] && line[i] != '\\n'; i++) {
+        char c = line[i];
+        // Classify and count
+    }
+
+    printf("%d\\n%d\\n%d\\n%d\\n", lower, upper, digits, other);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "Hello World 123!", expected_stdout: "7\n2\n3\n3\n" },
+    { stdin: "abcABC", expected_stdout: "3\n3\n0\n0\n" },
+    { stdin: "12345", expected_stdout: "0\n0\n5\n0\n" }
+  ]}
+  hints={[
+    "Use c >= 'a' && c <= 'z' for lowercase.",
+    "Use c >= 'A' && c <= 'Z' for uppercase.",
+    "Use c >= '0' && c <= '9' for digits.",
+    "Everything else is 'other' (including spaces and punctuation)."
+  ]}
+/>
+
+## What's Next
+
+Next: more advanced file operations — choosing the right I/O function, parsing structured data, and a decision framework for `fscanf` vs `fgets` vs `fread`.

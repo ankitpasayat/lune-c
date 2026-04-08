@@ -1,0 +1,273 @@
+---
+title: "Preprocessor Directives"
+module: "The Preprocessor & Build System"
+order: 1
+description: "#define, #include, #ifdef — the text transformation step before compilation."
+difficulty: "intermediate"
+---
+
+Before the compiler sees a single line of your code, another program runs first: the **preprocessor**. It reads your `.c` file, follows every directive that starts with `#`, and produces a modified version of the source code. Then — and only then — does the actual compiler take over.
+
+Why does this exist? Historical necessity. When C was designed in the early 1970s, the language had no built-in mechanism for constants, no templates, no module system, and no way to conditionally compile different code for different platforms. The preprocessor was the answer to all of these problems — a simple text transformation engine bolted onto the front of the compiler. It's crude compared to what modern languages offer, but it's powerful, and understanding it is essential because **every C program you've ever compiled has gone through it**.
+
+## The Compilation Pipeline
+
+```
+Source code --> Preprocessor --> Compiler --> Assembler --> Linker --> Executable
+  (.c)           (text)        (assembly)    (.o)          (a.out)
+```
+
+You can actually see the preprocessor's output by running `gcc -E myfile.c`. The result is often thousands of lines long — because `#include <stdio.h>` pulls in the *entire* standard I/O header, which itself includes other headers. Your 10-line program becomes a 500-line wall of declarations that the compiler actually processes.
+
+## #include — Copy-Paste on Steroids
+
+`#include` doesn't "import" or "link" anything. It literally **copies the entire contents** of the specified file and pastes them into your source code at the point of the `#include` directive. That's it. No intelligence, no deduplication, no dependency resolution. Pure textual insertion.
+
+This is why you see function **declarations** in header files (`.h`) but not **definitions**. If a header contained actual function code and you included it in two `.c` files, the linker would see two copies of the same function and complain about duplicate symbols. Headers contain *promises* ("this function exists with this signature"); the `.c` files contain *implementations*.
+
+<Editor defaultCode={`#include <stdio.h>   // system header (angle brackets)
+// #include "myfile.h"  // local header (quotes)
+
+int main() {
+    // stdio.h gives us printf, scanf, FILE, etc.
+    printf("stdio.h provides this function\\n");
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+`<angle brackets>` search system include paths. `"quotes"` search the current directory first, then system paths. Always use angle brackets for standard library headers.
+</Callout>
+
+## #define — Text Substitution, Not Variables
+
+`#define` creates a **macro**: a name that the preprocessor replaces with a value everywhere it appears. This is *not* a variable. There's no memory allocation, no type, no scope. The preprocessor does a find-and-replace in your source text before the compiler ever runs.
+
+When you write `#define MAX_SIZE 100`, every occurrence of `MAX_SIZE` in your code is literally replaced with the text `100`. The compiler never sees `MAX_SIZE` — it only sees `100`. This means macros don't obey scope rules, can't be inspected in a debugger (which sees the expanded value, not the name), and have no type checking.
+
+So why use them at all? Before C had `const` (and even after, since `const int` can't be used for array sizes in older C standards), `#define` was the *only* way to create named constants. And macros can do things that `const` variables cannot — like stringification, token pasting, and conditional code selection. They're a blunt tool, but sometimes a blunt tool is what you need.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define MAX_SIZE 100
+#define PI 3.14159265
+#define GREETING "Hello, World!"
+
+int main() {
+    int arr[MAX_SIZE];  // preprocessor replaces MAX_SIZE with 100
+
+    printf("%s\\n", GREETING);
+    printf("Pi is about %.5f\\n", PI);
+    printf("Array can hold %d elements\\n", MAX_SIZE);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+`#define` does **text replacement** — it has no concept of types or scope. The preprocessor literally replaces every occurrence of `MAX_SIZE` with `100` before the compiler sees the code.
+</Callout>
+
+## Macros vs Functions — The Key Difference
+
+Because macros are text substitution, they can produce surprising results. Consider `#define SQUARE(x) x * x`. If you call `SQUARE(3+1)`, the preprocessor expands it to `3+1 * 3+1`, which evaluates as `3 + (1*3) + 1 = 7`, not `16`. A function would evaluate `3+1` first and then square `4`.
+
+This is the core distinction: **functions evaluate their arguments once, then execute. Macros substitute text, then the result gets compiled.** Macros are faster (no function call overhead) but dangerous if you're not careful with parentheses. The safe version is `#define SQUARE(x) ((x) * (x))` — extra parentheses prevent operator precedence surprises.
+
+We'll cover function-like macros in depth in the next lesson.
+
+## Conditional Compilation — One Codebase, Many Builds
+
+This is where the preprocessor becomes genuinely powerful. `#if`, `#ifdef`, `#ifndef`, `#elif`, and `#endif` let you include or exclude entire blocks of code at compile time. The excluded code doesn't just "not run" — it *doesn't exist* in the compiled binary. It's as if you deleted those lines before compiling.
+
+Why is this useful? Three major scenarios:
+
+**Debug vs release builds.** Sprinkle `#ifdef DEBUG` around logging statements. Compile with `-DDEBUG` during development to see verbose output. Compile without it for production — zero overhead, because the logging code doesn't exist.
+
+**Platform-specific code.** `#ifdef _WIN32` lets you write Windows-specific code alongside Linux-specific code in the same file. Each platform only compiles its own section.
+
+**Feature flags.** `#ifdef FEATURE_ENCRYPTION` lets you ship different versions of your software with different feature sets, all from one codebase.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define DEBUG 1
+#define VERSION 2
+
+int main() {
+    printf("Program starting\\n");
+
+    #if DEBUG
+    printf("[DEBUG] Debug mode is ON\\n");
+    #endif
+
+    #if VERSION == 1
+    printf("Running version 1\\n");
+    #elif VERSION == 2
+    printf("Running version 2\\n");
+    #else
+    printf("Unknown version\\n");
+    #endif
+
+    #ifdef DEBUG
+    printf("[DEBUG] This only compiles if DEBUG is defined\\n");
+    #endif
+
+    #ifndef RELEASE
+    printf("Not a release build\\n");
+    #endif
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Include Guards — Solving the Double-Inclusion Problem
+
+Since `#include` is just copy-paste, what happens if you include the same header twice? The struct and type definitions in that header get pasted twice, and the compiler sees duplicate definitions — a hard error.
+
+This happens more easily than you'd think. If `main.c` includes `graphics.h` and `input.h`, and `input.h` also includes `graphics.h`, then `graphics.h`'s contents appear twice in the preprocessed output. In a large project with dozens of headers, circular and redundant includes are inevitable.
+
+The solution is the **include guard** — a `#ifndef`/`#define`/`#endif` wrapper that makes the header's contents appear only once, no matter how many times the file is `#include`d.
+
+Here's how it works: The first time the header is included, `MY_HEADER_H` is not defined, so the `#ifndef` passes through, defines `MY_HEADER_H`, and includes all the content. The second time, `MY_HEADER_H` is already defined, so `#ifndef` skips everything up to `#endif`. The content effectively disappears on subsequent inclusions.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Simulate a header file with include guard:
+#ifndef MY_HEADER_H
+#define MY_HEADER_H
+
+// This content only appears once, even if "included" multiple times
+#define MAX_ITEMS 50
+
+typedef struct {
+    char name[32];
+    int value;
+} Item;
+
+#endif  // MY_HEADER_H
+
+// Modern alternative: #pragma once (widely supported but non-standard)
+
+int main() {
+    Item item = {"test", 42};
+    printf("Max items: %d\\n", MAX_ITEMS);
+    printf("Item: %s = %d\\n", item.name, item.value);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="tip">
+Every header file should have include guards. Without them, including the same header twice causes "redefinition" errors. The pattern is:
+```c
+#ifndef FILENAME_H
+#define FILENAME_H
+// ... contents ...
+#endif
+```
+</Callout>
+
+## Predefined Macros
+
+The compiler automatically defines useful macros that let you embed build-time information into your program. These are invaluable for debugging — you can print exactly which file and line number an error occurred at, without manually typing that information into every log message.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    printf("File: %s\\n", __FILE__);
+    printf("Line: %d\\n", __LINE__);
+    printf("Date: %s\\n", __DATE__);
+    printf("Time: %s\\n", __TIME__);
+    printf("Function: %s\\n", __func__);
+
+    #ifdef __STDC__
+    printf("Standard C compiler\\n");
+    #endif
+
+    #ifdef __STDC_VERSION__
+    printf("C standard version: %ldL\\n", __STDC_VERSION__);
+    #endif
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## #undef
+
+Remove a macro definition. This is occasionally useful when you want to redefine a macro with a different value, or when a system header defines something that clashes with your code.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define TEMP 100
+
+int main() {
+    printf("TEMP = %d\\n", TEMP);
+
+    #undef TEMP
+    // TEMP is no longer defined after this point
+
+    int TEMP = 42;  // Now we can use TEMP as a variable name
+    printf("TEMP = %d\\n", TEMP);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Exercise: Conditional Greeting
+
+<Exercise
+  title="Conditional compilation"
+  description="Read an integer. If it's 1, print 'Good morning'. If it's 2, print 'Good afternoon'. If it's 3, print 'Good evening'. Otherwise print 'Hello'."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int choice;
+    scanf("%d", &choice);
+
+    if (choice == 1) printf("Good morning\\n");
+    else if (choice == 2) printf("Good afternoon\\n");
+    else if (choice == 3) printf("Good evening\\n");
+    else printf("Hello\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1", expected_stdout: "Good morning\n" },
+    { stdin: "2", expected_stdout: "Good afternoon\n" },
+    { stdin: "3", expected_stdout: "Good evening\n" },
+    { stdin: "5", expected_stdout: "Hello\n" }
+  ]}
+  hints={[
+    "In real code, you might use #define to set the greeting at compile time.",
+    "This exercise uses runtime selection, but the concept of choosing between options is the same."
+  ]}
+/>
+
+## Exercise: Debug Print Macro
+
+<Exercise
+  title="Debug output"
+  description="Read an integer N. Print 'value: N'. In a real program, you'd wrap this in a #ifdef DEBUG block, but for this exercise just do the printing."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    printf("value: %d\\n", n);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "42", expected_stdout: "value: 42\n" },
+    { stdin: "-1", expected_stdout: "value: -1\n" },
+    { stdin: "0", expected_stdout: "value: 0\n" }
+  ]}
+  hints={[
+    "This is a simple exercise to understand the concept.",
+    "In practice: #ifdef DEBUG\\n  printf(\"value: %d\\n\", n);\\n#endif"
+  ]}
+/>
+
+## What's Next
+
+Next: **function-like macros** — when `#define` gets powerful (and dangerous).

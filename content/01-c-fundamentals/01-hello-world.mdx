@@ -1,0 +1,168 @@
+---
+title: "Hello, World!"
+module: "C Fundamentals"
+order: 1
+description: "Write your first C program and understand what every line does."
+difficulty: "beginner"
+---
+
+Every programmer starts here. But unlike a tutorial that just tells you to type `printf` and move on, we're going to understand *exactly* what happens when you write and run a C program.
+
+## Your First Program
+
+Here's the classic:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    printf("Hello, world!\\n");\n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+Click **Run** and you should see `Hello, world!` in the output panel. Now let's break down every single line.
+
+## What Each Line Does
+
+### `#include <stdio.h>`
+
+This is a **preprocessor directive**. Before the compiler even looks at your code, a program called the preprocessor runs first. `#include` literally copies the contents of a file called `stdio.h` into your source code.
+
+`stdio.h` stands for **Standard Input/Output Header**. It declares functions like `printf` (print formatted output) and `scanf` (read formatted input).
+
+<Callout type="info">
+The preprocessor literally copy-pastes the entire header file into your source code before compilation begins. This is different from a module or import system — it's raw text insertion. We'll explore the preprocessor in much more detail later.
+</Callout>
+
+### `int main()`
+
+This declares a **function** called `main` that returns an `int` (integer). Every C program must have exactly one `main` function — it's where execution begins.
+
+The `int` return type matters: your program returns a number to the operating system. `0` means "everything went fine." Any other number means an error occurred.
+
+<Callout type="info">
+When you run a command in your terminal and then check `echo $?`, you're seeing the return value of that program's `main()` function. This is how scripts and tools detect whether a command succeeded or failed.
+</Callout>
+
+### `printf("Hello, world!\n")`
+
+`printf` = **print formatted**. It writes text to **stdout** (standard output — usually your terminal).
+
+The `\n` is a **newline character**. Without it, your terminal prompt would appear right after "Hello, world!" on the same line.
+
+### `return 0;`
+
+Returns the integer `0` to the operating system, signaling successful execution. After this line, your program exits.
+
+## Try It Yourself
+
+<Exercise
+  title="Modify the greeting"
+  description="Change the program to print 'Hello, C!' instead of 'Hello, world!'. Make sure to keep the newline at the end."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    printf("Hello, world!\\n");\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "Hello, C!\n" }
+  ]}
+  hints={[
+    "Replace the text inside the double quotes in the printf call.",
+    "Make sure you keep the \\n at the end — it's the newline character."
+  ]}
+/>
+
+## The Compilation Process
+
+Unlike Python or JavaScript, C is a **compiled language**. Your source code goes through several stages before it becomes a program the computer can run:
+
+1. **Preprocessing** — `#include` directives are resolved, macros are expanded
+2. **Compilation** — C code is translated to assembly language
+3. **Assembly** — Assembly is translated to machine code (object files)
+4. **Linking** — Object files are combined with library code to produce an executable
+
+On Linux, the standard compiler is **GCC** (GNU Compiler Collection):
+
+```
+gcc -o hello hello.c    # Compile hello.c into an executable called 'hello'
+./hello                 # Run it
+```
+
+<Callout type="info">
+When you hit "Run" on this website, your code is sent to a server running GCC inside a secure sandbox. The same compile-link-run cycle happens behind the scenes every time.
+</Callout>
+
+## Multiple printf Calls
+
+You can call `printf` multiple times. Each call picks up where the last one left off:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    printf("Line 1\\n");\n    printf("Line 2\\n");\n    printf("Still line 2... ");\n    printf("because no newline above\\n");\n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Exercise: Multi-line Output
+
+<Exercise
+  title="Print your name card"
+  description="Print exactly three lines: your name, a separator line of dashes, and 'Student'. Use the format shown in the expected output."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    // Print three lines:\n    // Ankit\n    // ----------\n    // Student\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "Ankit\n----------\nStudent\n" }
+  ]}
+  hints={[
+    "You need three printf calls, each ending with \\n",
+    "The separator line is exactly 10 dashes: ----------"
+  ]}
+/>
+
+## Escape Sequences
+
+The `\n` we used is called an **escape sequence**. C has several:
+
+| Sequence | Meaning |
+|----------|---------|
+| `\n` | Newline |
+| `\t` | Tab |
+| `\\` | Backslash |
+| `\"` | Double quote |
+| `\0` | Null character |
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    printf("Col1\\tCol2\\tCol3\\n");\n    printf("A\\tB\\tC\\n");\n    printf("She said \\"hello\\"\\n");\n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Exercise: Escape Artist
+
+<Exercise
+  title="Escape sequences"
+  description={"Print the following two lines exactly (including the quotes and backslash):\nPath: C:\\Users\nShe said \"hi\""}
+  starterCode={`#include <stdio.h>\n\nint main() {\n    // Print: Path: C:\\Users\n    // Print: She said "hi"\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "Path: C:\\Users\nShe said \"hi\"\n" }
+  ]}
+  hints={[
+    "Use \\\\\\\\ to print a single backslash.",
+    "Use \\\\\" to print a double quote inside a string."
+  ]}
+/>
+
+## Exercise: Right Triangle
+
+<Exercise
+  title="Print a right triangle"
+  description="Print a right triangle made of * characters with 3 rows, like this:\n*\n**\n***"
+  starterCode={`#include <stdio.h>\n\nint main() {\n    // Print a 3-row right triangle of * characters\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "*\n**\n***\n" }
+  ]}
+  hints={[
+    "You need three printf calls, one for each row.",
+    "Row 1 has one *, row 2 has two **, row 3 has three ***. Each row ends with \\n."
+  ]}
+/>
+
+## Exercise: Return Code
+
+<Exercise
+  title="Non-zero exit"
+  description="Write a program that prints 'Error occurred' and returns exit code 1 (instead of the usual 0)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    // Print an error message and return 1\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "", expected_stdout: "Error occurred\n" }
+  ]}
+  hints={[
+    "Change 'return 0' to 'return 1' to signal an error to the operating system.",
+    "The test only checks stdout — it doesn't check the return code. But get in the habit of using return values correctly."
+  ]}
+/>
+
+## What's Next
+
+You've written your first C program and understood what every line does. In the next lesson, we'll explore **variables and types** — how C stores data in memory, and why it matters that an `int` is exactly 4 bytes on most systems.

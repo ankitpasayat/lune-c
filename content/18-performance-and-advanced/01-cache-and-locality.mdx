@@ -1,0 +1,365 @@
+---
+title: "Cache and Locality"
+module: "Performance & Advanced C"
+order: 1
+description: "Understand CPU caches, spatial and temporal locality, and how data layout affects performance."
+difficulty: "advanced"
+---
+
+Here's a fact that surprises most programmers: the biggest performance bottleneck in modern code isn't your algorithm — it's whether your data is in cache.
+
+A modern CPU can execute billions of operations per second, but fetching a single value from main memory (RAM) takes roughly 200 clock cycles. That means every cache miss wastes the time the CPU could have spent doing 200 additions. Multiply that by millions of accesses, and cache-unfriendly code can be **10-100x slower** than cache-friendly code doing the exact same computation.
+
+Understanding why requires a mental model of how memory actually works.
+
+## The Memory Hierarchy: Why Caches Exist
+
+Think of your computer's memory system like an office:
+
+- **Registers** are the numbers you're holding in your head right now — instant to use, but you can only hold a few.
+- **L1 cache** is your desk — small (32-64 KB), but you can grab anything on it in about 4 clock cycles.
+- **L2 cache** is your filing cabinet — bigger (256 KB-1 MB), a short walk away (~12 cycles).
+- **L3 cache** is the storage closet down the hall — sizeable (4-32 MB), but ~40 cycles to fetch something.
+- **RAM** is the warehouse across town — huge (gigabytes), but every trip costs ~200 cycles.
+- **Disk/SSD** is the off-site archive — effectively infinite, but thousands of cycles per access.
+
+The reason this hierarchy exists is economics: fast memory is physically expensive and must be small. Slow memory is cheap and can be large. Caches bridge the gap by keeping recently-used and nearby data close to the CPU, because programs tend to access the same data repeatedly (**temporal locality**) and tend to access nearby addresses in sequence (**spatial locality**).
+
+One critical detail: **the CPU never fetches just one byte**. It always loads a full **cache line** — 64 bytes on virtually all modern hardware. When you read `array[0]`, the CPU loads `array[0]` through `array[15]` (for 4-byte ints). If you then access `array[1]`, it's already in cache — free.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    printf("=== Memory Hierarchy ===\\n\\n");
+
+    printf("Level       Size        Latency      Bandwidth\\n");
+    printf("----------  ----------  -----------  ----------\\n");
+    printf("Registers   ~1 KB       0 cycles     —\\n");
+    printf("L1 Cache    32-64 KB    ~4 cycles    ~1 TB/s\\n");
+    printf("L2 Cache    256 KB-1 MB ~12 cycles   ~500 GB/s\\n");
+    printf("L3 Cache    4-32 MB     ~40 cycles   ~200 GB/s\\n");
+    printf("RAM         4-64 GB     ~200 cycles  ~50 GB/s\\n");
+    printf("SSD         256 GB+     ~10K cycles  ~5 GB/s\\n");
+
+    printf("\\nKey insight: L1 cache is ~50x faster than RAM!\\n");
+    printf("A cache miss (going to RAM) costs ~200 cycles.\\n");
+    printf("That's ~200 simple operations you could have done.\\n\\n");
+
+    printf("Cache line: 64 bytes (the unit of transfer)\\n");
+    printf("When you read 1 byte, the CPU loads 64 bytes.\\n");
+
+    return 0;
+}
+`} />
+
+## Spatial Locality: Access Memory Sequentially
+
+Spatial locality means: if you just accessed address N, you're likely to access N+1 soon. The hardware bets on this by loading entire cache lines.
+
+This has a direct implication: **sequential access is fast, random access is slow.** When you iterate through an array with stride 1, every cache line you load gives you 16 useful int values (64 bytes / 4 bytes per int). You pay the memory latency cost once and get 15 more accesses essentially free.
+
+But when you skip elements — say with stride 16 — you load a fresh cache line for every single access, use one int from it, and throw the rest away. You pay full memory latency every time. Same data, same computation, dramatically different speed.
+
+This is why the seemingly innocent choice of how you walk through data matters so much.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <time.h>
+
+#define SIZE (1024 * 1024)  // 1M elements
+
+int data[SIZE];
+
+// Row-major access: FAST (sequential in memory)
+long long sum_sequential(void) {
+    long long sum = 0;
+    for (int i = 0; i < SIZE; i++) {
+        sum += data[i];  // Next element is next in memory
+    }
+    return sum;
+}
+
+// Strided access: varies by stride
+long long sum_strided(int stride) {
+    long long sum = 0;
+    for (int i = 0; i < SIZE; i += stride) {
+        sum += data[i];  // Skips 'stride' elements
+    }
+    return sum;
+}
+
+int main() {
+    // Initialize
+    for (int i = 0; i < SIZE; i++) data[i] = i & 0xFF;
+
+    printf("=== Spatial Locality ===\\n\\n");
+
+    clock_t t;
+
+    t = clock();
+    long long s1 = sum_sequential();
+    double time1 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    t = clock();
+    long long s16 = sum_strided(16);
+    double time16 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    printf("Sequential (stride 1):  sum=%lld, time=%.4fs\\n", s1, time1);
+    printf("Strided (stride 16):    sum=%lld, time=%.4fs\\n", s16, time16);
+    printf("\\nSequential is fast because each cache line\\n");
+    printf("(64 bytes = 16 ints) is fully used.\\n");
+    printf("Stride-16 wastes every cache line fetch!\\n");
+
+    return 0;
+}
+`} />
+
+## Row-Major vs Column-Major
+
+This is where cache knowledge pays off immediately. In C, a 2D array `int matrix[R][C]` is stored **row-major**: all elements of row 0 come first, then all of row 1, and so on. The memory layout is:
+
+```
+matrix[0][0], matrix[0][1], matrix[0][2], ..., matrix[1][0], matrix[1][1], ...
+```
+
+When you traverse with the inner loop over columns (`matrix[i][j]` with `j` changing fastest), you walk through memory sequentially. Each step moves 4 bytes forward, and each cache line gives you 16 consecutive values.
+
+But when you reverse the loops — inner loop over rows (`matrix[i][j]` with `i` changing fastest) — each step jumps by `N * 4` bytes. For a 1024x1024 matrix, that's a 4 KB jump between accesses. Every access is a cache miss. The computation is identical; the access pattern makes it dramatically slower.
+
+**The rule is simple: in C, the inner loop should always iterate over the last index.**
+
+<Editor defaultCode={`#include <stdio.h>
+#include <time.h>
+
+#define N 1024
+
+int matrix[N][N];
+
+// Row-major traversal: FAST in C
+// C stores arrays row-by-row: matrix[0][0], matrix[0][1], ...
+long long sum_row_major(void) {
+    long long sum = 0;
+    for (int i = 0; i < N; i++) {       // Each row
+        for (int j = 0; j < N; j++) {   // Each column
+            sum += matrix[i][j];         // Sequential in memory!
+        }
+    }
+    return sum;
+}
+
+// Column-major traversal: SLOW in C
+// Jumps by N*sizeof(int) bytes between accesses
+long long sum_col_major(void) {
+    long long sum = 0;
+    for (int j = 0; j < N; j++) {       // Each column
+        for (int i = 0; i < N; i++) {   // Each row
+            sum += matrix[i][j];         // Stride = N*4 bytes!
+        }
+    }
+    return sum;
+}
+
+int main() {
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < N; j++)
+            matrix[i][j] = (i + j) & 0xFF;
+
+    printf("=== Matrix Traversal Order ===\\n\\n");
+    printf("Matrix: %dx%d (%zu KB)\\n\\n", N, N, sizeof(matrix)/1024);
+
+    clock_t t;
+
+    t = clock();
+    long long s1 = sum_row_major();
+    double t1 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    t = clock();
+    long long s2 = sum_col_major();
+    double t2 = (double)(clock() - t) / CLOCKS_PER_SEC;
+
+    printf("Row-major:    sum=%lld, time=%.4fs\\n", s1, t1);
+    printf("Column-major: sum=%lld, time=%.4fs\\n", s2, t2);
+
+    if (t1 > 0)
+        printf("\\nColumn-major is ~%.1fx slower\\n", t2/t1);
+
+    printf("\\nRule: In C, always make the INNER loop\\n");
+    printf("iterate over the LAST array index.\\n");
+
+    return 0;
+}
+`} />
+
+## Struct Layout: AoS vs SoA
+
+Cache locality doesn't just affect arrays — it changes how you should design your data structures. This is the core idea behind **data-oriented design**: instead of organizing data around objects (like OOP teaches), organize it around how you *access* it.
+
+Consider a game with 100,000 entities. Each entity has a position (x, y, z), velocity (vx, vy, vz), health, and type. The natural OOP approach is an **Array of Structs (AoS)**: one struct per entity, all fields packed together.
+
+But what if your physics update only needs positions and velocities? With AoS, loading one entity's position also loads its health and type into the cache line — data you don't need right now. Every cache line carries wasted bytes.
+
+The alternative is **Struct of Arrays (SoA)**: separate arrays for each field. Now all X coordinates are contiguous in memory, all Y coordinates are contiguous, and so on. When you iterate over positions, every byte in every cache line is useful data.
+
+SoA is typically faster for "process one field across all entities" operations (physics, rendering, AI), which is what games and simulations spend most of their time doing. AoS is better when you frequently need all fields of a single entity (serialization, network sync). Smart engines use a hybrid — grouping related fields that are accessed together.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <time.h>
+
+#define COUNT 100000
+
+// Array of Structs (AoS): each entity is one struct
+typedef struct {
+    float x, y, z;    // Position (12 bytes)
+    float vx, vy, vz; // Velocity (12 bytes)
+    int health;        // 4 bytes
+    int type;          // 4 bytes
+    // Total: 32 bytes per entity
+} Entity_AoS;
+
+Entity_AoS entities_aos[COUNT];
+
+// Struct of Arrays (SoA): each field is a separate array
+typedef struct {
+    float x[COUNT], y[COUNT], z[COUNT];     // Positions
+    float vx[COUNT], vy[COUNT], vz[COUNT];  // Velocities
+    int health[COUNT];
+    int type[COUNT];
+} Entities_SoA;
+
+Entities_SoA entities_soa;
+
+// SoA is better when you process one field at a time
+void update_positions_soa(void) {
+    for (int i = 0; i < COUNT; i++) {
+        entities_soa.x[i] += entities_soa.vx[i];  // Sequential!
+        entities_soa.y[i] += entities_soa.vy[i];
+        entities_soa.z[i] += entities_soa.vz[i];
+    }
+}
+
+// AoS is better when you process all fields of one entity
+void update_positions_aos(void) {
+    for (int i = 0; i < COUNT; i++) {
+        entities_aos[i].x += entities_aos[i].vx;  // 32-byte stride
+        entities_aos[i].y += entities_aos[i].vy;
+        entities_aos[i].z += entities_aos[i].vz;
+    }
+}
+
+int main() {
+    printf("=== AoS vs SoA ===\\n\\n");
+
+    printf("Array of Structs (AoS):\\n");
+    printf("  [x,y,z,vx,vy,vz,hp,type][x,y,z,...]\\n");
+    printf("  Good for: accessing all fields of one entity\\n");
+    printf("  Stride: %zu bytes between entities\\n\\n", sizeof(Entity_AoS));
+
+    printf("Struct of Arrays (SoA):\\n");
+    printf("  x:  [x0, x1, x2, ...]\\n");
+    printf("  y:  [y0, y1, y2, ...]\\n");
+    printf("  vx: [vx0, vx1, ...]\\n");
+    printf("  Good for: processing one field across all entities\\n");
+    printf("  Stride: %zu bytes (just sizeof(float))\\n\\n",
+           sizeof(float));
+
+    printf("SoA advantages:\\n");
+    printf("  - Better cache utilization for field-wise ops\\n");
+    printf("  - Enables SIMD vectorization\\n");
+    printf("  - Common in game engines, simulations\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+Profile before optimizing! Use `perf stat` on Linux to count cache misses: `perf stat -e cache-references,cache-misses ./program`. If cache miss rate is > 5%, data layout changes can help dramatically.
+</Callout>
+
+## Exercise: Efficient Matrix Sum
+
+<Exercise
+  title="Sum matrix elements efficiently"
+  description="Read N (size of square matrix), then N*N integers in row-major order. Print the sum. Use row-major traversal for cache efficiency."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int matrix[100][100];
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            scanf("%d", &matrix[i][j]);
+
+    long long sum = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            sum += matrix[i][j];
+
+    printf("%lld\\n", sum);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 2 3 4 5 6 7 8 9", expected_stdout: "45\n" },
+    { stdin: "2\n10 20 30 40", expected_stdout: "100\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "4\n1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1", expected_stdout: "16\n" }
+  ]}
+  hints={[
+    "Inner loop should iterate over columns (last index) for row-major access.",
+    "This is the natural order in C — matrix[i][j] with i outer, j inner.",
+    "Use long long for the sum to avoid overflow."
+  ]}
+/>
+
+## Exercise: Transpose a Matrix
+
+<Exercise
+  title="Matrix transpose"
+  description="Read N (size of square matrix), then N*N integers. Print the transpose (rows become columns). Output each row on its own line, values space-separated."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int m[100][100];
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            scanf("%d", &m[i][j]);
+
+    // Transpose: swap m[i][j] and m[j][i]
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            int tmp = m[i][j];
+            m[i][j] = m[j][i];
+            m[j][i] = tmp;
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (j > 0) printf(" ");
+            printf("%d", m[i][j]);
+        }
+        printf("\\n");
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 2 3 4 5 6 7 8 9", expected_stdout: "1 4 7\n2 5 8\n3 6 9\n" },
+    { stdin: "2\n1 2 3 4", expected_stdout: "1 3\n2 4\n" },
+    { stdin: "1\n5", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "In-place transpose: swap elements above the diagonal with below.",
+    "Only swap when j > i to avoid swapping twice.",
+    "The diagonal elements stay in place."
+  ]}
+/>
+
+## What's Next
+
+Next: **Function Pointers** — callbacks, dispatch tables, and polymorphism in C.

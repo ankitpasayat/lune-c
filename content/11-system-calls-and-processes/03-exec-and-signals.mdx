@@ -1,0 +1,395 @@
+---
+title: "Exec and Signals"
+module: "System Calls & Processes"
+order: 3
+description: "Replacing process images with exec(), and handling signals for inter-process communication."
+difficulty: "advanced"
+---
+
+`fork()` creates a copy of the current process — but what if you want to run a *different* program? That's where `exec()` comes in. And once you have multiple processes running, you need a way for them to poke each other. That's what **signals** are for.
+
+## The Body Snatcher: exec()
+
+`exec()` doesn't create a new process. It **replaces** the current process's code, data, stack, and heap with a completely new program loaded from disk. The PID stays the same. The process table entry stays the same. But everything inside the process is overwritten — like a body snatcher taking over.
+
+Why replace instead of create? Because Unix already has `fork()` for creating processes. The combination of `fork() + exec()` gives you full control:
+
+1. `fork()` — create a copy of the current process
+2. (In the child) set up file descriptors, environment, etc.
+3. `exec()` — replace the child with the new program
+
+This two-step approach is more powerful than a single "create process running this program" call, because the step between fork and exec lets you set up the child's environment (redirect I/O, change working directory, drop privileges) *before* the new program starts.
+
+```c
+#include <unistd.h>
+
+// exec variants:
+execl("/bin/ls", "ls", "-l", NULL);       // list of args
+execv("/bin/ls", argv);                    // vector of args
+execlp("ls", "ls", "-l", NULL);           // search PATH
+execvp("ls", argv);                       // search PATH + vector
+execle("/bin/ls", "ls", NULL, envp);      // custom environment
+execvpe("ls", argv, envp);               // PATH + vector + env
+```
+
+## The exec Naming Convention
+
+There are so many exec variants because they're a matrix of three independent choices:
+
+| Letter | Meaning | Why you'd choose it |
+|--------|---------|-------------------|
+| `l` | Arguments as a **l**ist (`arg1, arg2, ..., NULL`) | When you know the arguments at compile time |
+| `v` | Arguments as a **v**ector (`char *argv[]`) | When arguments are built dynamically (e.g., from user input) |
+| `p` | Search **P**ATH for the program | When you want to run "ls" instead of "/bin/ls" |
+| `e` | Pass custom **e**nvironment | When the child needs different env vars than the parent |
+
+So `execvp` means "vector of args + search PATH" and `execlpe` means "list of args + search PATH + custom environment." Pick the combination that fits your use case.
+
+## fork() + exec() in Practice
+
+This is the pattern that every shell uses to run commands:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    printf("Parent: Starting ls command...\\n");
+
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child: replace with 'ls'
+        // After exec, this code is gone — replaced by ls
+        execlp("ls", "ls", "-la", "/tmp", NULL);
+
+        // Only reaches here if exec failed
+        perror("exec failed");
+        _exit(1);
+    }
+
+    // Parent: wait for child
+    int status;
+    waitpid(pid, &status, 0);
+    printf("Parent: ls exited with status %d\\n", WEXITSTATUS(status));
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+After a successful `exec()`, the original program's code is **completely replaced**. Any code after `exec()` only runs if exec fails. That's why we use `fork()` first — to keep the parent alive.
+</Callout>
+
+Notice the use of `_exit(1)` instead of `exit(1)` in the child after a failed exec. This avoids flushing the parent's stdio buffers — the child inherited copies of those buffers, and flushing them would cause duplicate output.
+
+## Building a Simple Shell
+
+A shell is surprisingly simple at its core — just a loop of: read command, fork, exec, wait. All the complexity is in parsing, job control, and built-in commands.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+// This is a simplified demo — a real shell would use
+// fork/exec/waitpid, but we'll simulate the logic
+
+int main() {
+    printf("=== Mini Shell Concept ===\\n\\n");
+
+    // A real shell loop:
+    // while (1) {
+    //     char cmd[256];
+    //     printf("$ ");
+    //     fgets(cmd, sizeof(cmd), stdin);
+    //     
+    //     pid_t pid = fork();
+    //     if (pid == 0) {
+    //         // Parse cmd into argv
+    //         execlp(cmd, cmd, NULL);
+    //         perror("exec");
+    //         exit(1);
+    //     }
+    //     waitpid(pid, &status, 0);
+    // }
+
+    printf("Shell lifecycle:\\n");
+    printf("1. Display prompt\\n");
+    printf("2. Read user input\\n");
+    printf("3. Parse into command + arguments\\n");
+    printf("4. fork() to create child\\n");
+    printf("5. Child: exec() the command\\n");
+    printf("6. Parent: wait() for child\\n");
+    printf("7. Repeat\\n");
+
+    printf("\\nBuilt-in commands (handled by shell itself):\\n");
+    printf("  cd   - change directory (chdir)\\n");
+    printf("  exit - exit the shell\\n");
+    printf("  export - set environment variables\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Commands like `cd` are **built-in** to the shell — they can't be external programs because they need to change the shell process's own working directory. If `cd` were an external program, the `exec`'d child would change *its* directory, exit, and the parent shell would be unaffected.
+
+## Signals: Software Interrupts
+
+Signals are the Unix mechanism for delivering asynchronous notifications to a process. Think of them as **software interrupts** — they can arrive at any time, interrupting whatever your program is doing, and your code gets a chance to handle them before resuming.
+
+Common scenarios that generate signals:
+
+- You press **Ctrl+C** — the terminal sends `SIGINT` to the foreground process
+- You run `kill PID` — sends `SIGTERM` by default
+- Your program accesses invalid memory — the CPU triggers `SIGSEGV`
+- A child process exits — the parent receives `SIGCHLD`
+- A timer you set goes off — delivers `SIGALRM`
+
+| Signal | Number | Default Action | Common Use |
+|--------|--------|---------------|------------|
+| `SIGINT` | 2 | Terminate | Ctrl+C |
+| `SIGTERM` | 15 | Terminate | Polite kill request |
+| `SIGKILL` | 9 | Terminate | Force kill (can't catch) |
+| `SIGSEGV` | 11 | Core dump | Segmentation fault |
+| `SIGCHLD` | 17 | Ignore | Child process exited |
+| `SIGALRM` | 14 | Terminate | Timer expired |
+| `SIGUSR1` | 10 | Terminate | User-defined |
+
+Every signal has a **default action** (usually terminate or ignore), but you can install your own **signal handler** — a function that runs when the signal arrives. Two exceptions: `SIGKILL` and `SIGSTOP` can never be caught or ignored. They're the kernel's emergency stop, ensuring you can always terminate a runaway process.
+
+## Handling Signals
+
+<Editor defaultCode={`#include <stdio.h>
+#include <signal.h>
+#include <stdlib.h>
+
+// Signal handler function
+void handle_signal(int sig) {
+    if (sig == SIGINT) {
+        printf("\\nCaught SIGINT (Ctrl+C)! Cleaning up...\\n");
+        exit(0);
+    } else if (sig == SIGTERM) {
+        printf("\\nCaught SIGTERM! Shutting down gracefully...\\n");
+        exit(0);
+    }
+}
+
+int main() {
+    // Register signal handlers
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
+
+    printf("Signal handler demo\\n");
+    printf("PID: %d\\n", getpid());
+    printf("Signal handlers registered for SIGINT and SIGTERM.\\n\\n");
+
+    // In a real program, you'd have a main loop here:
+    // while (running) { do_work(); }
+
+    // Demo: show signal numbers
+    printf("Common signals:\\n");
+    printf("  SIGINT  = %d (Ctrl+C)\\n", SIGINT);
+    printf("  SIGTERM = %d (kill)\\n", SIGTERM);
+    printf("  SIGKILL = %d (force kill, cannot catch)\\n", SIGKILL);
+    printf("  SIGSEGV = %d (segfault)\\n", SIGSEGV);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+`SIGKILL` (9) and `SIGSTOP` cannot be caught, blocked, or ignored. They always take effect. Use `SIGTERM` for graceful shutdown requests.
+</Callout>
+
+## Why Signal Handlers Must Be Careful
+
+A signal handler interrupts your program at an *arbitrary* point. Your code might be in the middle of modifying a data structure, allocating memory, or writing to a file. If the signal handler tries to do those same things, you get corruption.
+
+Only a small set of functions are guaranteed safe to call inside a signal handler — these are called **async-signal-safe** functions. `write()` is safe. `printf()`, `malloc()`, and `exit()` are **not** safe (though `_exit()` is).
+
+The safest pattern: have your signal handler set a flag, and check the flag in your main loop.
+
+```c
+volatile sig_atomic_t got_signal = 0;
+
+void handler(int sig) {
+    got_signal = 1;  // Just set a flag — minimal work
+}
+
+// In main loop:
+while (!got_signal) {
+    do_work();
+}
+// Clean up here, outside the handler
+```
+
+## sigaction() — Modern Signal Handling
+
+The `signal()` function has portability issues (its behavior varies between Unix variants). `sigaction()` is the recommended replacement — it gives you explicit control over what happens during signal delivery:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <signal.h>
+#include <string.h>
+
+void handler(int sig) {
+    // Signal-safe: only use async-signal-safe functions here
+    // printf is NOT signal-safe, but we use it for demo purposes
+    const char *msg = "Signal caught!\\n";
+    write(1, msg, 15);  // write() IS signal-safe
+}
+
+int main() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;  // Restart interrupted system calls
+
+    // Register handler
+    sigaction(SIGUSR1, &sa, NULL);
+
+    printf("sigaction handler registered for SIGUSR1\\n");
+    printf("PID: %d\\n", getpid());
+    printf("\\nTo test: kill -USR1 %d\\n", getpid());
+
+    // Raise the signal ourselves for demo
+    raise(SIGUSR1);
+    printf("Continuing after signal...\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The `SA_RESTART` flag is important: without it, if a signal arrives while your program is blocked in a system call (like `read()`), the system call fails with `EINTR` and you have to retry it manually. With `SA_RESTART`, the kernel automatically restarts the interrupted call.
+
+## system() — Running Shell Commands
+
+Sometimes you just want to run a shell command from C without setting up the full fork/exec/wait dance. The `system()` function does exactly that:
+
+```c
+#include <stdlib.h>
+
+int ret = system("ls -la /tmp");  // runs the command in /bin/sh
+```
+
+Internally, `system()` does `fork()`, then the child calls `exec()` on `/bin/sh -c "your command"`, and the parent calls `waitpid()`. It returns the exit status of the shell. It's a convenience function designed for quick-and-dirty tasks: running build tools, clearing the screen, or calling other utilities from a C program.
+
+<Callout type="error">
+Never pass unsanitized user input to `system()`. Because it invokes a full shell, an attacker can inject arbitrary commands. For example, if `filename` comes from user input, `system("cat " + filename)` with `filename = "; rm -rf /"` is catastrophic. Use `fork()`/`exec()` with explicit argument lists for untrusted input — that bypasses the shell entirely.
+</Callout>
+
+## opendir and readdir — Listing Directories
+
+To iterate over the contents of a directory, POSIX provides `opendir()`, `readdir()`, and `closedir()` from `<dirent.h>`. This is the C equivalent of running `ls`:
+
+```c
+#include <stdio.h>
+#include <dirent.h>
+
+DIR *dir = opendir("/tmp");
+if (dir == NULL) {
+    perror("opendir");
+    return 1;
+}
+
+struct dirent *entry;
+while ((entry = readdir(dir)) != NULL) {
+    // Skip "." and ".." entries
+    if (entry->d_name[0] == '.') continue;
+
+    printf("%s\n", entry->d_name);  // filename
+}
+closedir(dir);
+```
+
+Each `struct dirent` returned by `readdir()` gives you `d_name` (the filename) and on most systems `d_type` (the entry type: `DT_REG` for regular files, `DT_DIR` for directories, `DT_LNK` for symlinks). Note that `d_type` is not guaranteed by POSIX — some filesystems set it to `DT_UNKNOWN`, in which case you need to call `stat()` on the path to determine the type.
+
+The entries are returned in filesystem order (not sorted), and always include `.` (current directory) and `..` (parent directory), which you'll usually want to skip.
+
+## Exercise: Signal Name Lookup
+
+<Exercise
+  title="Signal decoder"
+  description="Read N signal numbers. For each, print the signal name. Handle signals 2 (SIGINT), 9 (SIGKILL), 11 (SIGSEGV), 14 (SIGALRM), and 15 (SIGTERM). Print 'UNKNOWN' for others."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        int sig;
+        scanf("%d", &sig);
+
+        switch (sig) {
+            case 2:  printf("SIGINT\\n"); break;
+            case 9:  printf("SIGKILL\\n"); break;
+            case 11: printf("SIGSEGV\\n"); break;
+            case 14: printf("SIGALRM\\n"); break;
+            case 15: printf("SIGTERM\\n"); break;
+            default: printf("UNKNOWN\\n"); break;
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n2 9 11 14 15", expected_stdout: "SIGINT\nSIGKILL\nSIGSEGV\nSIGALRM\nSIGTERM\n" },
+    { stdin: "3\n2 99 15", expected_stdout: "SIGINT\nUNKNOWN\nSIGTERM\n" },
+    { stdin: "1\n11", expected_stdout: "SIGSEGV\n" }
+  ]}
+  hints={[
+    "Use a switch statement to map signal numbers to names.",
+    "Signal 2 is SIGINT, 9 is SIGKILL, 11 is SIGSEGV.",
+    "Any unrecognized number should print UNKNOWN."
+  ]}
+/>
+
+## Exercise: Command Parser
+
+<Exercise
+  title="Shell command parser"
+  description="Read a command line (single string with spaces). Split it into the command (first word) and arguments. Print 'Command: X' and then each argument as 'Arg N: X'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char line[256];
+    fgets(line, sizeof(line), stdin);
+    line[strcspn(line, "\\n")] = '\\0';
+
+    char *tokens[20];
+    int count = 0;
+
+    char *tok = strtok(line, " ");
+    while (tok != NULL && count < 20) {
+        tokens[count++] = tok;
+        tok = strtok(NULL, " ");
+    }
+
+    if (count > 0) {
+        printf("Command: %s\\n", tokens[0]);
+        for (int i = 1; i < count; i++) {
+            printf("Arg %d: %s\\n", i, tokens[i]);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "ls -la /home", expected_stdout: "Command: ls\nArg 1: -la\nArg 2: /home\n" },
+    { stdin: "gcc -o main main.c", expected_stdout: "Command: gcc\nArg 1: -o\nArg 2: main\nArg 3: main.c\n" },
+    { stdin: "echo hello", expected_stdout: "Command: echo\nArg 1: hello\n" }
+  ]}
+  hints={[
+    "Use strtok() to split the line by spaces.",
+    "The first token is the command.",
+    "Remaining tokens are arguments numbered starting from 1."
+  ]}
+/>
+
+## What's Next
+
+Let's explore **pipes and redirection** — connecting processes together to build powerful data pipelines.

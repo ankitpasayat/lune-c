@@ -1,0 +1,410 @@
+---
+title: "Stacks"
+module: "Stacks, Queues & Trees"
+order: 1
+description: "Last-In-First-Out data structure — push, pop, peek, and practical applications."
+difficulty: "intermediate"
+---
+
+A **stack** is a Last-In-First-Out (LIFO) data structure. Think of a stack of plates — you add to the top and remove from the top. You can't pull a plate from the middle without toppling the pile.
+
+This "last in, first out" constraint sounds limiting. Why would you *want* a container where you can only touch the top? Because a surprising number of problems have **nested, reversible structure** — and stacks are the natural tool for those.
+
+## Recognizing Stack Problems
+
+Before we write code, let's build an intuition for *when* a stack is the right tool. Ask yourself these questions:
+
+**"Do I need to reverse something?"** — Stacks naturally reverse order. Push A, B, C → pop gets C, B, A. If you need to undo the order of things, a stack does it for free.
+
+**"Am I matching pairs?"** — Opening and closing brackets, HTML tags, function calls and returns — whenever something *opens* and must later *close* in the correct order, a stack tracks what's still open.
+
+**"Do I need undo/redo?"** — Text editors push each action onto a stack. Undo = pop from the action stack. Redo = pop from a second stack. The most recent action is always on top — exactly what undo should reverse.
+
+**"Am I doing depth-first exploration?"** — When you explore a maze by going as deep as possible before backtracking, you're implicitly using a stack. Every recursive function call uses the call stack to remember where to return.
+
+## Stack Operations
+
+| Operation | Description | Time |
+|-----------|-------------|------|
+| `push(x)` | Add element to top | O(1) |
+| `pop()` | Remove and return top | O(1) |
+| `peek()` | View top without removing | O(1) |
+| `isEmpty()` | Check if stack is empty | O(1) |
+
+Every operation is O(1) — constant time, regardless of how many elements are in the stack. This is what makes stacks so efficient. You never need to search through them or shift elements around.
+
+## Array-Based Stack
+
+The simplest implementation uses an array and a `top` index. The idea: `top` starts at -1 (meaning "empty"). Each push increments `top` and places the value there. Each pop reads the value at `top` and decrements it.
+
+Why -1 and not 0? Because `top` represents the index of the topmost element. When the stack is empty, there *is* no topmost element, so -1 is a natural sentinel value. After one push, `top` becomes 0 — the first valid array index.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+#define MAX_SIZE 100
+
+typedef struct {
+    int data[MAX_SIZE];
+    int top;  // index of topmost element, -1 when empty
+} Stack;
+
+void init(Stack *s) {
+    s->top = -1;
+}
+
+int is_empty(Stack *s) {
+    return s->top == -1;
+}
+
+int is_full(Stack *s) {
+    return s->top == MAX_SIZE - 1;
+}
+
+void push(Stack *s, int val) {
+    if (is_full(s)) {
+        fprintf(stderr, "Stack overflow\\n");
+        return;
+    }
+    s->data[++s->top] = val;
+}
+
+int pop(Stack *s) {
+    if (is_empty(s)) {
+        fprintf(stderr, "Stack underflow\\n");
+        exit(1);
+    }
+    return s->data[s->top--];
+}
+
+int peek(Stack *s) {
+    if (is_empty(s)) {
+        fprintf(stderr, "Stack empty\\n");
+        exit(1);
+    }
+    return s->data[s->top];
+}
+
+int main() {
+    Stack s;
+    init(&s);
+
+    push(&s, 10);
+    push(&s, 20);
+    push(&s, 30);
+
+    printf("Top: %d\\n", peek(&s));
+    printf("Pop: %d\\n", pop(&s));
+    printf("Pop: %d\\n", pop(&s));
+    printf("Pop: %d\\n", pop(&s));
+    printf("Empty: %s\\n", is_empty(&s) ? "yes" : "no");
+
+    return 0;
+}
+`} time="O(1) per operation" space="O(n)" />
+
+Notice the expression `s->data[++s->top] = val` — the pre-increment moves `top` up first, *then* stores the value at the new position. On pop, `s->data[s->top--]` reads the value first, *then* decrements. This two-in-one trick is idiomatic C, but if it confuses you, splitting it into separate lines does the same thing:
+
+```c
+s->top++;
+s->data[s->top] = val;
+```
+
+<Callout type="info">
+The array-based stack is the most common in practice. The fixed-size limit (`MAX_SIZE`) is the main drawback. For dynamic sizing, use `realloc` or switch to a linked-list stack.
+</Callout>
+
+## Linked-List Stack
+
+What if you don't know the maximum size upfront? A linked list lets the stack grow without limit (until you run out of memory). The key insight: **the head of the linked list IS the top of the stack.**
+
+Why the head and not the tail? Because inserting and removing at the head of a singly linked list is O(1) — you just update one pointer. Inserting at the tail requires walking the entire list (O(n)) unless you keep a tail pointer, and even then removing from the tail is O(n) in a singly linked list because you need the second-to-last node.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+typedef struct {
+    Node *top;
+    int size;
+} Stack;
+
+void init(Stack *s) {
+    s->top = NULL;
+    s->size = 0;
+}
+
+void push(Stack *s, int val) {
+    Node *n = malloc(sizeof(Node));
+    n->data = val;
+    n->next = s->top;
+    s->top = n;
+    s->size++;
+}
+
+int pop(Stack *s) {
+    if (s->top == NULL) {
+        fprintf(stderr, "Stack underflow\\n");
+        exit(1);
+    }
+    Node *temp = s->top;
+    int val = temp->data;
+    s->top = temp->next;
+    free(temp);
+    s->size--;
+    return val;
+}
+
+void free_stack(Stack *s) {
+    while (s->top) {
+        Node *t = s->top;
+        s->top = s->top->next;
+        free(t);
+    }
+}
+
+int main() {
+    Stack s;
+    init(&s);
+
+    push(&s, 100);
+    push(&s, 200);
+    push(&s, 300);
+
+    while (s.size > 0) {
+        printf("%d\\n", pop(&s));
+    }
+
+    return 0;
+}
+`} time="O(1) per operation" space="O(n)" />
+
+The trade-off: each node costs extra memory for the `next` pointer (8 bytes on a 64-bit system), and `malloc`/`free` calls are slower than simple index arithmetic. For most programs, the array-based stack is faster and simpler — use the linked version only when you truly can't predict the maximum size.
+
+## Classic Application: Balanced Parentheses
+
+Here's where stacks shine. Consider the string `{[()]}`. How do you verify every bracket has a matching partner in the correct order?
+
+The insight: **when you see an opening bracket, you don't know its match yet — but you know the most recent unmatched opener must be closed first.** That's LIFO ordering. Push each opener. When you see a closer, the top of the stack must be its matching opener. If it isn't, the string is unbalanced.
+
+Walk through `({)}` mentally:
+- `(` → push. Stack: `(`
+- `{` → push. Stack: `( {`
+- `)` → pop `{` — but `)` doesn't match `{`. **Unbalanced.**
+
+The stack catches the nesting violation that a simple counter (counting opens and closes) would miss.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX 1000
+
+typedef struct {
+    char data[MAX];
+    int top;
+} CharStack;
+
+void init(CharStack *s) { s->top = -1; }
+int is_empty(CharStack *s) { return s->top == -1; }
+void push(CharStack *s, char c) { s->data[++s->top] = c; }
+char pop(CharStack *s) { return s->data[s->top--]; }
+
+int is_balanced(const char *expr) {
+    CharStack s;
+    init(&s);
+
+    for (int i = 0; expr[i]; i++) {
+        char c = expr[i];
+        if (c == '(' || c == '[' || c == '{') {
+            push(&s, c);
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (is_empty(&s)) return 0;
+            char top = pop(&s);
+            if ((c == ')' && top != '(') ||
+                (c == ']' && top != '[') ||
+                (c == '}' && top != '{')) {
+                return 0;
+            }
+        }
+    }
+    return is_empty(&s);
+}
+
+int main() {
+    const char *tests[] = {
+        "((()))",
+        "{[()]}",
+        "((]",
+        "({)}",
+        ""
+    };
+
+    for (int i = 0; i < 5; i++) {
+        printf("\\"%s\\" -> %s\\n",
+               tests[i],
+               is_balanced(tests[i]) ? "balanced" : "unbalanced");
+    }
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Notice the final check: `return is_empty(&s)`. Why? Consider the string `(((` — every character is an opener, nothing fails during the loop, but the stack still has unmatched brackets. If the stack isn't empty at the end, we had more openers than closers.
+
+## Postfix Evaluation: A Step-by-Step Walkthrough
+
+You've seen infix notation your whole life: `3 + 4`. But computers find **postfix** (also called Reverse Polish Notation) easier to evaluate because it needs no parentheses and no operator precedence rules.
+
+In postfix, the operator comes *after* its operands: `3 4 +` means "add 3 and 4."
+
+The rule: **scan left to right. If you see a number, push it. If you see an operator, pop two numbers, apply the operator, push the result.**
+
+Let's trace `3 4 + 2 *` step by step:
+
+```
+Token  Action              Stack
+─────  ──────              ─────
+3      push 3              [3]
+4      push 4              [3, 4]
++      pop 4, pop 3        [7]        ← 3+4=7, push 7
+2      push 2              [7, 2]
+*      pop 2, pop 7        [14]       ← 7*2=14, push 14
+```
+
+Result: 14. That's `(3 + 4) * 2` — the postfix notation encoded the parentheses implicitly through operand ordering.
+
+Now a trickier one: `5 1 2 + 4 * + 3 -`
+
+```
+Token  Action              Stack
+─────  ──────              ─────
+5      push 5              [5]
+1      push 1              [5, 1]
+2      push 2              [5, 1, 2]
++      pop 2, pop 1        [5, 3]       ← 1+2=3
+4      push 4              [5, 3, 4]
+*      pop 4, pop 3        [5, 12]      ← 3*4=12
++      pop 12, pop 5       [17]         ← 5+12=17
+3      push 3              [17, 3]
+-      pop 3, pop 17       [14]         ← 17-3=14
+```
+
+Result: 14. That's `5 + (1 + 2) * 4 - 3`.
+
+<Callout type="warning">
+**Order matters for subtraction and division.** When you pop two values for `-`, the *first* pop is the right operand and the *second* pop is the left operand. So `a b -` means `a - b`, not `b - a`. If you mix up the order, subtraction and division give wrong results while addition and multiplication (being commutative) hide the bug.
+</Callout>
+
+## Exercise: Reverse a String with a Stack
+
+<Exercise
+  title="Reverse with stack"
+  description="Read a single word (no spaces). Print it reversed. Use a stack to reverse it character by character."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX 1000
+
+int main() {
+    char word[MAX];
+    scanf("%999s", word);
+
+    // Push each character onto a stack
+    // Pop all characters and print them
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "olleh\n" },
+    { stdin: "abcdef", expected_stdout: "fedcba\n" },
+    { stdin: "a", expected_stdout: "a\n" }
+  ]}
+  hints={[
+    "Use a char array as a stack with a top index.",
+    "Push each character of the word onto the stack.",
+    "Pop all characters — they come out in reverse order."
+  ]}
+/>
+
+## Exercise: Balanced Parentheses
+
+<Exercise
+  title="Check balanced brackets"
+  description="Read a string containing only '(', ')', '[', ']', '{', '}'. Print 'yes' if balanced, 'no' otherwise."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX 1000
+
+int main() {
+    char expr[MAX];
+    scanf("%999s", expr);
+
+    // Check if the brackets are balanced
+    // Print "yes" or "no"
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "{[()]}", expected_stdout: "yes\n" },
+    { stdin: "((]", expected_stdout: "no\n" },
+    { stdin: "()", expected_stdout: "yes\n" },
+    { stdin: "({)}", expected_stdout: "no\n" }
+  ]}
+  hints={[
+    "Use a char stack. Push opening brackets, pop when you see a closing bracket.",
+    "When popping, check that the popped bracket matches the closing one.",
+    "After processing all characters, the stack should be empty for a balanced string."
+  ]}
+/>
+
+## Exercise: Evaluate Postfix
+
+<Exercise
+  title="Postfix calculator"
+  description="Read a postfix expression (tokens separated by spaces on one line). Operators are +, -, *. Operands are single integers. Print the result. Example: '3 4 + 2 *' means (3+4)*2 = 14."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define MAX 100
+
+int main() {
+    char line[1000];
+    fgets(line, sizeof(line), stdin);
+
+    int stack[MAX];
+    int top = -1;
+
+    char *token = strtok(line, " \\n");
+    while (token != NULL) {
+        // If token is an operator, pop two operands and push result
+        // Otherwise push the number
+        token = strtok(NULL, " \\n");
+    }
+
+    printf("%d\\n", stack[top]);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 4 + 2 *", expected_stdout: "14\n" },
+    { stdin: "5 1 2 + 4 * + 3 -", expected_stdout: "14\n" },
+    { stdin: "10 20 +", expected_stdout: "30\n" }
+  ]}
+  hints={[
+    "Use strtok to split the input by spaces.",
+    "If the token is '+', '-', or '*', pop two values, compute, and push the result.",
+    "Otherwise, convert the token to an integer with atoi and push it.",
+    "For subtraction: the first popped value is the right operand, the second is the left."
+  ]}
+/>
+
+## What's Next
+
+Next: **queues** — the First-In-First-Out counterpart to the stack. Where stacks model "most recent first" problems, queues model "first come, first served" — and the implementation trick to make them efficient is surprisingly elegant.

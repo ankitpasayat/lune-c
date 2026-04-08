@@ -1,0 +1,296 @@
+---
+title: "Processes and Fork"
+module: "System Calls & Processes"
+order: 2
+description: "Creating processes with fork(), the process lifecycle, and parent-child relationships."
+difficulty: "advanced"
+---
+
+Every running program is a **process** — an isolated instance with its own memory, its own file descriptors, and its own place in the operating system's process table. Understanding processes is how you understand what your computer is actually *doing* at any given moment.
+
+## What Is a Process?
+
+A process is more than just "a running program." It's the kernel's unit of resource management. Each process has:
+
+- **PID** — a unique process ID assigned by the kernel
+- **Memory space** — its own copy of code, stack, heap, and global variables, completely isolated from other processes
+- **File descriptors** — its own table of open files, sockets, pipes
+- **State** — running, sleeping (waiting for I/O), stopped (by a signal), or zombie (finished but not yet cleaned up)
+
+The kernel tracks all of this in a data structure for every process on the system. You can see them with `ps aux` or in `/proc` on Linux.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+
+int main() {
+    printf("Process ID (PID):  %d\\n", getpid());
+    printf("Parent PID (PPID): %d\\n", getppid());
+    printf("User ID (UID):     %d\\n", getuid());
+    printf("Group ID (GID):    %d\\n", getgid());
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Every process has a parent (except PID 1, the `init` process). This creates a tree: `init` spawns your login shell, your shell spawns the programs you run, and those can spawn more children. Run `pstree` on Linux to see this hierarchy.
+
+## The Unix Philosophy Behind fork()
+
+How do you create a new process? In Unix, the answer is surprisingly simple: **make a copy of the current one.**
+
+That's what `fork()` does. It's like a photocopier for processes — the calling process is duplicated, and now there are two nearly identical processes running the same code at the same point. The only difference is the return value of `fork()` itself.
+
+Why not have a "create new process" call that takes a program path? Because `fork()` is a simpler primitive. It does exactly one thing (copy), and when combined with `exec()` (which replaces a process's code), it can do everything. This is the Unix philosophy: small, composable tools.
+
+```
+Before fork():
+  Process (PID 100)
+
+After fork():
+  Parent (PID 100)  ← fork() returns child's PID (101)
+  Child  (PID 101)  ← fork() returns 0
+```
+
+The return value is what lets each copy know which one it is. The child gets 0 ("you're the new one"). The parent gets the child's PID ("here's your child's ID so you can manage it").
+
+<Editor defaultCode={`#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    printf("Before fork: PID = %d\\n", getpid());
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        // Error
+        perror("fork failed");
+        return 1;
+    } else if (pid == 0) {
+        // Child process
+        printf("Child:  PID = %d, Parent PID = %d\\n", getpid(), getppid());
+        printf("Child:  fork() returned %d\\n", pid);
+    } else {
+        // Parent process
+        printf("Parent: PID = %d, Child PID = %d\\n", getpid(), pid);
+        printf("Parent: fork() returned %d\\n", pid);
+
+        // Wait for child to finish
+        int status;
+        waitpid(pid, &status, 0);
+        printf("Parent: Child exited with status %d\\n", WEXITSTATUS(status));
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+`fork()` may not work in sandboxed environments. The code above demonstrates the concept — try it on a real Linux/macOS system with `gcc fork_demo.c -o fork_demo && ./fork_demo`.
+</Callout>
+
+## What Gets Copied, What Doesn't
+
+After `fork()`, the child has its own **independent copy** of:
+- All variables (globals, stack, heap)
+- All file descriptors (but they point to the same underlying kernel resources)
+- The program counter (execution continues from the same point)
+
+What the child does **not** get:
+- The parent's threads (only the calling thread is duplicated)
+- Pending signals
+
+In practice, the kernel doesn't actually copy all the memory immediately. It uses **copy-on-write (COW)**: parent and child share the same physical memory pages, and the kernel only makes a real copy when one of them tries to *modify* a page. This makes fork() fast even for large processes.
+
+```c
+pid_t pid = fork();
+
+if (pid == 0) {
+    // CHILD: gets return value 0
+    // Has its own copy of all variables
+} else if (pid > 0) {
+    // PARENT: gets child's PID
+    // Original variables unchanged
+} else {
+    // ERROR: fork failed (out of memory, process limit, etc.)
+}
+```
+
+## Reaping Children: wait() and waitpid()
+
+When a child process exits, it doesn't just vanish. The kernel keeps its exit status in the process table so the parent can retrieve it. Until the parent calls `wait()` or `waitpid()`, the child's entry lingers as a **zombie process**.
+
+Why does this design exist? Because the parent might need to know *how* the child exited — did it succeed? Crash? Get killed? The kernel preserves this information until someone asks for it.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child does some work
+        printf("Child (PID %d): Working...\\n", getpid());
+        // Simulate work
+        for (volatile int i = 0; i < 1000000; i++);
+        printf("Child: Done! Exiting with status 42.\\n");
+        exit(42);
+    }
+
+    // Parent waits
+    printf("Parent: Waiting for child %d...\\n", pid);
+    int status;
+    pid_t finished = waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status)) {
+        printf("Parent: Child %d exited normally with status %d\\n",
+               finished, WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+        printf("Parent: Child killed by signal %d\\n",
+               WTERMSIG(status));
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The `WIFEXITED`, `WEXITSTATUS`, and `WIFSIGNALED` macros decode the status value — it packs multiple pieces of information (exit code, signal number, whether the process dumped core) into a single integer.
+
+## Multiple Children
+
+A parent can fork multiple children and wait for them all. Each fork creates one new process, and each child runs independently:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main() {
+    int num_children = 3;
+
+    for (int i = 0; i < num_children; i++) {
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            // Each child does different work
+            printf("Child %d (PID %d) starting\\n", i, getpid());
+            // Simulate variable work
+            for (volatile long j = 0; j < (i + 1) * 500000L; j++);
+            printf("Child %d done\\n", i);
+            exit(i);  // Exit with child number
+        }
+    }
+
+    // Parent waits for all children
+    for (int i = 0; i < num_children; i++) {
+        int status;
+        pid_t pid = wait(&status);
+        printf("Parent: Child PID %d exited with status %d\\n",
+               pid, WEXITSTATUS(status));
+    }
+
+    printf("Parent: All children done\\n");
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="info">
+Notice that `wait()` returns children in the order they **finish**, not the order they were created. Child 0 might finish after Child 2 if it has more work to do. This is real concurrency — the kernel schedules them independently.
+</Callout>
+
+## Zombies and Orphans
+
+These terms sound dramatic, but they describe real process lifecycle states:
+
+**Zombie**: A child process that has exited but whose parent hasn't called `wait()` yet. It takes up a slot in the process table (just its PID and exit status, no memory). A few zombies are harmless; thousands can exhaust the process table.
+
+**Orphan**: A child whose parent exited first. The kernel "re-parents" it to PID 1 (`init` or `systemd`), which automatically reaps it. Orphans are handled gracefully — it's zombies you need to worry about.
+
+| Type | Cause | Solution |
+|------|-------|----------|
+| **Zombie** | Child exits but parent hasn't called `wait()` | Parent must `wait()` or `waitpid()` |
+| **Orphan** | Parent exits before child | Orphan adopted by `init` (PID 1) |
+
+```c
+// Create a zombie (don't do this in real code!)
+if (fork() == 0) {
+    exit(0);  // Child exits immediately
+}
+sleep(60);    // Parent sleeps without calling wait()
+              // Child is a zombie for 60 seconds
+```
+
+The practical lesson: if your program forks children, always reap them. Use `waitpid()` in a loop, or install a `SIGCHLD` handler to reap asynchronously.
+
+## Exercise: Process Simulation
+
+<Exercise
+  title="Fork return values"
+  description="Simulate fork() by reading the return value. Read an integer. If it's 0, print 'child'. If it's positive, print 'parent of X' (where X is the value). If it's negative, print 'error'."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int fork_return;
+    scanf("%d", &fork_return);
+
+    if (fork_return == 0) {
+        printf("child\\n");
+    } else if (fork_return > 0) {
+        printf("parent of %d\\n", fork_return);
+    } else {
+        printf("error\\n");
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "child\n" },
+    { stdin: "1234", expected_stdout: "parent of 1234\n" },
+    { stdin: "-1", expected_stdout: "error\n" }
+  ]}
+  hints={[
+    "fork() returns 0 in the child process.",
+    "fork() returns the child's PID (positive) in the parent.",
+    "fork() returns -1 on error."
+  ]}
+/>
+
+## Exercise: Process Tree
+
+<Exercise
+  title="Process tree depth"
+  description="Read a number N representing the depth of a fork tree. Print the number of total processes created (including the original). Each process forks once at each level. Total processes = 2^N."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int depth;
+    scanf("%d", &depth);
+
+    long total = 1;
+    for (int i = 0; i < depth; i++) {
+        total *= 2;
+    }
+
+    printf("%ld\\n", total);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "1\n" },
+    { stdin: "1", expected_stdout: "2\n" },
+    { stdin: "3", expected_stdout: "8\n" },
+    { stdin: "10", expected_stdout: "1024\n" }
+  ]}
+  hints={[
+    "Each fork doubles the number of processes.",
+    "After N forks, there are 2^N processes.",
+    "Use a loop to compute the power of 2."
+  ]}
+/>
+
+## What's Next
+
+Now let's learn about **exec()** and **signals** — replacing a process image and handling asynchronous events.

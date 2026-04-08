@@ -1,0 +1,104 @@
+---
+title: "Structs"
+module: "Structs and Enums"
+order: 1
+description: "Defining, initializing, and accessing struct fields — grouping related data together."
+difficulty: "intermediate"
+---
+
+So far we've worked with individual variables and arrays of a single type. But real programs need to group different types of data together — a student has a name, age, and GPA. That's what `struct` is for.
+
+## Defining a Struct
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Point {\n    int x;\n    int y;\n};\n\nint main() {\n    struct Point p1;\n    p1.x = 3;\n    p1.y = 7;\n    \n    printf("Point: (%d, %d)\\n", p1.x, p1.y);\n    \n    // Initialize at declaration\n    struct Point p2 = {10, 20};\n    printf("Point: (%d, %d)\\n", p2.x, p2.y);\n    \n    // Designated initializers (C99)\n    struct Point p3 = {.y = 5, .x = 1};\n    printf("Point: (%d, %d)\\n", p3.x, p3.y);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+A struct defines a new type that groups **fields** (also called members). Access fields with the dot `.` operator.
+
+## Structs with Multiple Types
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Student {\n    char name[50];\n    int age;\n    float gpa;\n};\n\nint main() {\n    struct Student s = {"Alice", 20, 3.8};\n    \n    printf("Name: %s\\n", s.name);\n    printf("Age:  %d\\n", s.age);\n    printf("GPA:  %.1f\\n", s.gpa);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Arrays of Structs
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Student {\n    char name[50];\n    int score;\n};\n\nint main() {\n    struct Student class[] = {\n        {"Alice", 92},\n        {"Bob", 85},\n        {"Charlie", 97}\n    };\n    int n = sizeof(class) / sizeof(class[0]);\n    \n    // Find the highest scorer\n    int best = 0;\n    for (int i = 1; i < n; i++) {\n        if (class[i].score > class[best].score) {\n            best = i;\n        }\n    }\n    \n    printf("Top student: %s (%d)\\n", class[best].name, class[best].score);\n    \n    return 0;\n}\n`} time="O(n)" space="O(n)" />
+
+## Structs and Functions
+
+Structs can be passed to and returned from functions. Like all C values, they're passed **by value** (the function gets a copy):
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Point {\n    int x;\n    int y;\n};\n\n// Takes a copy — modifying p inside doesn't affect the caller\nvoid print_point(struct Point p) {\n    printf("(%d, %d)\\n", p.x, p.y);\n}\n\n// Returns a new struct\nstruct Point add_points(struct Point a, struct Point b) {\n    struct Point result = {a.x + b.x, a.y + b.y};\n    return result;\n}\n\nint main() {\n    struct Point a = {1, 2};\n    struct Point b = {3, 4};\n    struct Point sum = add_points(a, b);\n    \n    printf("Sum: ");\n    print_point(sum);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+Passing large structs by value copies all their data, which can be slow. For large structs, it's more efficient to pass a pointer instead. We'll cover this in the next lesson.
+</Callout>
+
+## Nested Structs
+
+Structs can contain other structs:
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Date {\n    int day;\n    int month;\n    int year;\n};\n\nstruct Person {\n    char name[50];\n    struct Date birthday;\n};\n\nint main() {\n    struct Person p = {"Alice", {15, 3, 1995}};\n    \n    printf("%s was born on %d/%d/%d\\n",\n           p.name, p.birthday.day, p.birthday.month, p.birthday.year);\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Struct Size and Padding
+
+The size of a struct may be larger than the sum of its fields due to **padding** (alignment):
+
+<Editor defaultCode={`#include <stdio.h>\n\nstruct Example {\n    char a;    // 1 byte\n    int b;     // 4 bytes\n    char c;    // 1 byte\n};\n\nstruct Packed {\n    int b;     // 4 bytes\n    char a;    // 1 byte\n    char c;    // 1 byte\n};\n\nint main() {\n    printf("Example: %zu bytes (expected 6)\\n", sizeof(struct Example));\n    printf("Packed:  %zu bytes\\n", sizeof(struct Packed));\n    \n    // Example is likely 12 bytes due to padding\n    // Packed is likely 8 bytes — more efficient\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+The CPU accesses memory most efficiently when data is aligned to its size (4-byte ints on 4-byte boundaries). The compiler inserts padding bytes to maintain alignment. Reordering fields by size (largest first) can reduce padding.
+</Callout>
+
+## Exercise: Rectangle Struct
+
+<Exercise
+  title="Rectangle area"
+  description="Define a struct Rectangle with width and height (integers). Read width and height from stdin. Print the area and perimeter."
+  starterCode={`#include <stdio.h>\n\nstruct Rectangle {\n    int width;\n    int height;\n};\n\nint main() {\n    struct Rectangle r;\n    scanf("%d %d", &r.width, &r.height);\n    \n    // Print area and perimeter\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5 3", expected_stdout: "area: 15\nperimeter: 16\n" },
+    { stdin: "10 10", expected_stdout: "area: 100\nperimeter: 40\n" },
+    { stdin: "1 7", expected_stdout: "area: 7\nperimeter: 16\n" }
+  ]}
+  hints={[
+    "Area = width * height, Perimeter = 2 * (width + height).",
+    "printf(\"area: %d\\nperimeter: %d\\n\", r.width * r.height, 2 * (r.width + r.height));"
+  ]}
+/>
+
+## Exercise: Highest GPA
+
+<Exercise
+  title="Find top student"
+  description="Read N (number of students), then for each student read a name (single word) and GPA (float). Print the name of the student with the highest GPA."
+  starterCode={`#include <stdio.h>\n\nstruct Student {\n    char name[50];\n    float gpa;\n};\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    struct Student students[100];\n    for (int i = 0; i < n; i++) {\n        scanf("%s %f", students[i].name, &students[i].gpa);\n    }\n    \n    // Find and print the name of the student with highest GPA\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "3\nAlice 3.8\nBob 3.9\nCharlie 3.5", expected_stdout: "Bob\n" },
+    { stdin: "2\nDan 4.0\nEve 4.0", expected_stdout: "Dan\n" },
+    { stdin: "1\nFrank 2.5", expected_stdout: "Frank\n" }
+  ]}
+  hints={[
+    "Start with best = 0, then compare each student's GPA to students[best].gpa.",
+    "printf(\"%s\\n\", students[best].name);"
+  ]}
+/>
+
+## Exercise: Distance Between Points
+
+<Exercise
+  title="Manhattan distance"
+  description="Read two points (x1 y1 x2 y2). Print the Manhattan distance: |x1-x2| + |y1-y2|."
+  starterCode={`#include <stdio.h>\n\nstruct Point {\n    int x;\n    int y;\n};\n\nint abs_val(int n) {\n    return n < 0 ? -n : n;\n}\n\nint main() {\n    struct Point a, b;\n    scanf("%d %d %d %d", &a.x, &a.y, &b.x, &b.y);\n    \n    // Calculate and print Manhattan distance\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "1 2 4 6", expected_stdout: "7\n" },
+    { stdin: "0 0 0 0", expected_stdout: "0\n" },
+    { stdin: "-3 5 2 -1", expected_stdout: "11\n" }
+  ]}
+  hints={[
+    "Manhattan distance = |x1-x2| + |y1-y2|. Use the abs_val helper.",
+    "printf(\"%d\\n\", abs_val(a.x - b.x) + abs_val(a.y - b.y));"
+  ]}
+/>
+
+## What's Next
+
+Next we'll learn how pointers work with structs — the arrow operator, struct pointers, and self-referential structs (the building blocks of linked lists).

@@ -1,0 +1,366 @@
+---
+title: "Recursion Deep Dive"
+module: "Recursion & Backtracking"
+order: 1
+description: "Master recursive thinking with arrays, multiple recursive calls, and stack-based reasoning."
+difficulty: "intermediate"
+---
+
+In the fundamentals module you wrote recursive functions that called themselves once —
+factorial, countdown, Fibonacci. Now we tackle problems where the recursive structure
+isn't immediately obvious, and where **one call branches into two or more**.
+
+This is where recursion transforms from a curiosity into a genuine problem-solving tool.
+
+## How to Think Recursively
+
+When faced with a problem, ask yourself:
+
+1. **Can I express the answer for size n in terms of size n−1 (or n/2)?** If yes,
+   that's your recursive case.
+2. **What's the smallest input where I know the answer immediately?** That's your
+   base case.
+3. **Does my recursion always move toward the base case?** If not, it'll loop forever.
+
+The trick is trusting the recursion. Once you define the function correctly, you don't
+need to mentally trace every call — just verify that:
+- The base case is correct.
+- The recursive case correctly combines sub-answers.
+- Every call gets closer to the base case.
+
+This is called the **recursive leap of faith**: assume the function works for smaller
+inputs, then show it works for the current input.
+
+## Recursion on Arrays
+
+Process an array by shrinking it with each call. The key question: **how do I
+reduce this array problem to a smaller array problem?**
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Sum: the sum of n elements = last element + sum of first n-1
+int array_sum(int arr[], int n) {
+    if (n == 0) return 0;       // Base: empty array sums to 0
+    return arr[n - 1] + array_sum(arr, n - 1);
+}
+
+// Is sorted? An array of n elements is sorted if:
+//   - the last two elements are in order, AND
+//   - the first n-1 elements are sorted
+int is_sorted(int arr[], int n) {
+    if (n <= 1) return 1;       // Base: 0 or 1 elements are trivially sorted
+    if (arr[n - 2] > arr[n - 1]) return 0;  // Last pair out of order
+    return is_sorted(arr, n - 1);           // Check the rest
+}
+
+// Maximum: max of n elements = max(last element, max of first n-1)
+int find_max(int arr[], int n) {
+    if (n == 1) return arr[0];  // Base: single element is the max
+    int sub_max = find_max(arr, n - 1);
+    return arr[n - 1] > sub_max ? arr[n - 1] : sub_max;
+}
+
+int main() {
+    int arr[] = {3, 1, 4, 1, 5, 9, 2, 6};
+    int n = 8;
+
+    printf("Array: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    printf("Sum: %d\\n", array_sum(arr, n));
+    printf("Sorted: %s\\n", is_sorted(arr, n) ? "yes" : "no");
+    printf("Max: %d\\n", find_max(arr, n));
+
+    int sorted[] = {1, 2, 3, 4, 5};
+    printf("\\n{1,2,3,4,5} sorted: %s\\n", is_sorted(sorted, 5) ? "yes" : "no");
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Notice the space complexity is O(n), not O(1). Each recursive call adds a frame to
+the stack. For `array_sum({3,1,4,1,5,9,2,6}, 8)`, there are 9 stack frames alive
+at peak (the 8 recursive calls + main). A simple `for` loop uses O(1) space. This
+is the cost of recursion — sometimes it's worth it (trees, backtracking), sometimes
+it isn't (summing an array).
+
+## Binary Search — Recursively
+
+Binary search has a beautiful recursive structure: the problem literally halves with
+each call. That's why it's O(log n).
+
+<Editor defaultCode={`#include <stdio.h>
+
+int binary_search(int arr[], int left, int right, int target) {
+    if (left > right) return -1;  // Base: empty range
+
+    int mid = left + (right - left) / 2;  // Avoids integer overflow
+
+    if (arr[mid] == target) return mid;       // Found it
+    if (arr[mid] > target)
+        return binary_search(arr, left, mid - 1, target);  // Left half
+    return binary_search(arr, mid + 1, right, target);      // Right half
+}
+
+int main() {
+    int arr[] = {2, 5, 8, 12, 16, 23, 38, 56, 72, 91};
+    int n = 10;
+
+    printf("Searching in: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n\\n");
+
+    int targets[] = {23, 72, 1, 56};
+    for (int i = 0; i < 4; i++) {
+        int idx = binary_search(arr, 0, n - 1, targets[i]);
+        if (idx >= 0)
+            printf("Found %d at index %d\\n", targets[i], idx);
+        else
+            printf("%d not found\\n", targets[i]);
+    }
+    return 0;
+}
+`} time="O(log n)" space="O(log n)" />
+
+<Callout type="info">
+Recursive binary search uses O(log n) stack space. An iterative version uses O(1).
+For binary search, the iterative version is usually preferred. But the recursive
+version reveals the structure: **every call reduces the problem to half its size**.
+That's the essence of divide and conquer.
+</Callout>
+
+## When One Call Branches Into Two
+
+Everything changes when a function calls itself **twice**. One call gives linear
+work. Two calls give exponential work — unless you're clever.
+
+Consider: how many times does naive recursive Fibonacci call itself?
+
+<Editor defaultCode={`#include <stdio.h>
+
+long long call_count = 0;
+
+int fib(int n) {
+    call_count++;
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main() {
+    // Watch the call count explode
+    for (int n = 5; n <= 35; n += 5) {
+        call_count = 0;
+        int result = fib(n);
+        printf("fib(%2d) = %10d  [%lld calls]\\n", n, result, call_count);
+    }
+    return 0;
+}
+`} time="O(2^n)" space="O(n)" />
+
+fib(35) makes over 18 million calls. fib(45) would make over 3 billion. The problem
+is **overlapping subproblems**: fib(10) calls fib(8) and fib(9), but fib(9) *also*
+calls fib(8). The same work is done over and over.
+
+This isn't a flaw of recursion — it's a flaw of *naive* recursion. You'll learn to
+fix this with **memoization** in the dynamic programming module. But the branching
+structure itself is exactly what we need for the problems below.
+
+## Generating All Subsets
+
+**Problem:** Given a set {1, 2, 3}, list all possible subsets.
+
+Before coding, think about this: a subset is defined by a *yes or no* decision for
+each element. Element 1: in or out? Element 2: in or out? Element 3: in or out?
+
+That's 2 × 2 × 2 = 8 possibilities. For n elements, it's 2ⁿ subsets. And the
+recursive structure is: **at each element, branch into two worlds** — one where
+the element is included and one where it's excluded.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_subset(int subset[], int size) {
+    printf("{");
+    for (int i = 0; i < size; i++) {
+        if (i > 0) printf(", ");
+        printf("%d", subset[i]);
+    }
+    printf("}\\n");
+}
+
+void generate_subsets(int arr[], int n, int index, int subset[], int sub_size) {
+    if (index == n) {
+        print_subset(subset, sub_size);
+        return;
+    }
+
+    // World 1: exclude arr[index]
+    generate_subsets(arr, n, index + 1, subset, sub_size);
+
+    // World 2: include arr[index]
+    subset[sub_size] = arr[index];
+    generate_subsets(arr, n, index + 1, subset, sub_size + 1);
+}
+
+int main() {
+    int arr[] = {1, 2, 3};
+    int subset[3];
+
+    printf("All subsets of {1, 2, 3}:\\n");
+    generate_subsets(arr, 3, 0, subset, 0);
+    printf("\\nTotal: 2^3 = 8 subsets\\n");
+    return 0;
+}
+`} time="O(2^n)" space="O(n)" />
+
+Why does this work? The recursion tree has depth n (one level per element). At each
+level, it branches into 2. So it has 2ⁿ leaves, each producing one subset. The
+recursion naturally enumerates all binary choices — include/exclude — without
+needing a loop over all 2ⁿ bit patterns.
+
+<Callout type="info">
+There's a deep connection here: each subset corresponds to a binary number. For
+{1, 2, 3}, the subset {1, 3} corresponds to binary 101 (element 1 in, 2 out, 3 in).
+The recursion tree is literally counting in binary from 000 to 111.
+</Callout>
+
+## Generating Permutations
+
+Subsets choose which elements to include. Permutations rearrange *all* elements into
+every possible order.
+
+The recursive structure: **for each position, try every element that hasn't been
+used yet.** For position 0, you have n choices. For position 1, n−1 choices. And so
+on. Total: n × (n−1) × (n−2) × ... × 1 = n! permutations.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void swap(int *a, int *b) {
+    int tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+void permute(int arr[], int n, int start) {
+    if (start == n) {
+        // All positions filled — print this permutation
+        for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+        printf("\\n");
+        return;
+    }
+
+    for (int i = start; i < n; i++) {
+        swap(&arr[start], &arr[i]);       // Choose arr[i] for position 'start'
+        permute(arr, n, start + 1);       // Fill remaining positions
+        swap(&arr[start], &arr[i]);       // UNDO the choice (backtrack)
+    }
+}
+
+int main() {
+    int arr[] = {1, 2, 3};
+    printf("All permutations of {1, 2, 3}:\\n");
+    permute(arr, 3, 0);
+    printf("\\nTotal: 3! = 6 permutations\\n");
+    return 0;
+}
+`} time="O(n!)" space="O(n)" />
+
+Notice the **undo step** after the recursive call: `swap(&arr[start], &arr[i])`.
+This restores the array to its original state so the next iteration of the loop can
+try a different element for position `start`. This is **backtracking** — the central
+idea of the next lesson.
+
+Think of it as exploring a tree: each branch represents a choice. You walk down a
+branch, reach a leaf (a complete permutation), then **walk back up** (undo the swap)
+to try the next branch. The undo step is what lets you explore every branch without
+making separate copies of the array.
+
+## The Decision Tree Mental Model
+
+Both subsets and permutations are best understood as **decision trees**:
+
+**Subsets** — a binary tree of depth n: each level asks "include element i?" and
+branches left (no) and right (yes). Every leaf is a subset.
+
+**Permutations** — an n-ary tree: at level 0, you branch n ways (which element goes
+first?). At level 1, n−1 ways. At the leaves, you have n! complete arrangements.
+
+This mental model will carry you through backtracking, game trees, and beyond. When you
+see a problem that asks "generate all X" or "count all X," draw the decision tree.
+The tree structure tells you the recursion structure.
+
+## Exercise: Print All Binary Strings
+
+<Exercise
+  title="Binary strings of length n"
+  description="Print all binary strings of length n, one per line, in lexicographic order. Read n (1 ≤ n ≤ 10)."
+  starterCode={`#include <stdio.h>
+
+void generate(char str[], int n, int pos) {
+    if (pos == n) {
+        str[n] = '\\0';
+        printf("%s\\n", str);
+        return;
+    }
+    // This is the subset pattern in disguise:
+    // at each position, choose '0' or '1'.
+    // Place '0' at pos, recurse
+    // Place '1' at pos, recurse
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    char str[11];
+    generate(str, n, 0);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "2", expected_stdout: "00\n01\n10\n11\n" },
+    { stdin: "3", expected_stdout: "000\n001\n010\n011\n100\n101\n110\n111\n" },
+    { stdin: "1", expected_stdout: "0\n1\n" }
+  ]}
+  hints={[
+    "At each position, try '0' first then '1' — that gives lexicographic order.",
+    "str[pos] = '0'; generate(str, n, pos+1); str[pos] = '1'; generate(str, n, pos+1);",
+    "This is exactly like subset generation: 2 choices per position, depth n, total 2^n outputs."
+  ]}
+/>
+
+## Exercise: Count Paths in Grid
+
+<Exercise
+  title="Grid paths"
+  description="Count the number of paths from top-left to bottom-right of an m×n grid. You can only move right or down. Read m and n."
+  starterCode={`#include <stdio.h>
+
+int count_paths(int row, int col, int m, int n) {
+    // Think: from any cell, I can go right or down.
+    // That's two recursive calls. But what are the base cases?
+
+    // If I've reached the bottom-right corner: found a valid path
+    // If I've gone off the grid: this path doesn't work
+
+    return 0;
+}
+
+int main() {
+    int m, n;
+    scanf("%d %d", &m, &n);
+    printf("%d\\n", count_paths(0, 0, m, n));
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "2 2", expected_stdout: "2\n" },
+    { stdin: "3 3", expected_stdout: "6\n" },
+    { stdin: "3 7", expected_stdout: "28\n" },
+    { stdin: "1 5", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "Base case: if row == m-1 && col == n-1, return 1 (reached destination).",
+    "Base case: if row >= m || col >= n, return 0 (off the grid).",
+    "Recursive case: return count_paths(row+1, col) + count_paths(row, col+1). This is the branching-into-two pattern — and yes, it has overlapping subproblems. DP can optimize it to O(m×n)."
+  ]}
+/>

@@ -1,0 +1,341 @@
+---
+title: "Reading & Writing"
+module: "File I/O"
+order: 2
+description: "fprintf, fscanf, fgets, fputs — reading and writing structured text data."
+difficulty: "intermediate"
+---
+
+C gives you a whole toolbox of I/O functions, and they all do slightly different things. This is confusing at first — why do `fscanf`, `fgets`, `fgetc`, and `fread` all exist? Aren't they all just "reading"?
+
+They are, but they read in fundamentally different ways, and choosing the wrong one leads to bugs. The goal of this lesson is to give you a clear mental model: **which function do I reach for, and why?**
+
+## The Decision Flowchart
+
+Before we dive into each function, here's the framework. When you need to read from a file (or stdin), ask yourself:
+
+1. **Am I reading raw binary data (structs, images, raw bytes)?** Use `fread`. (Next lesson covers this.)
+2. **Am I reading structured, whitespace-separated fields like numbers or tokens?** Use `fscanf`.
+3. **Am I reading whole lines of text?** Use `fgets`.
+4. **Am I processing one character at a time?** Use `fgetc`.
+
+For writing, the mirror applies: `fwrite` for binary, `fprintf` for formatted text, `fputs` for raw strings, `fputc` for single characters.
+
+The most common mistake beginners make is using `fscanf` for everything. It works great for simple cases like reading integers, but it breaks down badly when the input has unpredictable structure — lines with spaces, optional fields, or messy formatting. For general text processing, **`fgets` + manual parsing is almost always the safer choice**.
+
+## fprintf and fscanf — Formatted I/O
+
+`fprintf` is simply `printf` with a destination. Instead of always writing to `stdout`, you tell it *where* to write. In fact, `printf(...)` is equivalent to `fprintf(stdout, ...)` — it's literally the same function, just with `stdout` hardwired.
+
+`fscanf` is the reading counterpart: `scanf` with a source. It reads from the specified file stream, matching format specifiers and converting text to values.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Write structured data
+    FILE *fp = fopen("students.txt", "w");
+    if (!fp) { perror("open"); return 1; }
+
+    fprintf(fp, "Alice 95 3.8\\n");
+    fprintf(fp, "Bob 87 3.5\\n");
+    fprintf(fp, "Charlie 92 3.7\\n");
+    fclose(fp);
+
+    // Read it back
+    fp = fopen("students.txt", "r");
+    if (!fp) { perror("open"); return 1; }
+
+    char name[50];
+    int score;
+    float gpa;
+
+    printf("%-10s %5s %4s\\n", "Name", "Score", "GPA");
+    printf("%-10s %5s %4s\\n", "----", "-----", "---");
+
+    while (fscanf(fp, "%49s %d %f", name, &score, &gpa) == 3) {
+        printf("%-10s %5d %4.1f\\n", name, score, gpa);
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="info">
+`fscanf` returns the number of items successfully read. Always check the return value to detect end-of-file or parsing errors. If you expect 3 fields, check that the return value is 3.
+</Callout>
+
+**When fscanf works well**: The input is clean, predictable, whitespace-separated, and you know exactly what types to expect. Reading a file of integers? Perfect. Reading a file where each line has a string and two numbers? Great.
+
+**When fscanf breaks down**: The input has spaces inside strings (fscanf splits on whitespace, so "New York" would be read as two separate tokens). Or the input has blank lines, optional fields, or inconsistent formatting. In these cases, fscanf will silently misalign and start reading garbage.
+
+## fgets and fputs — Line-Based I/O
+
+`fgets` is the safe, reliable workhorse of text file reading. It reads one line at a time (up to a maximum buffer size), and it *always* null-terminates the result. You can't overflow a buffer with `fgets` if you pass the correct size — this is why it's preferred over `scanf` for reading strings.
+
+The tricky part: `fgets` includes the newline character `\n` in the string if it fits. This catches beginners off guard. If you read `"hello\n"`, the string isn't `"hello"` — it's `"hello\n"`. You need to strip the newline yourself.
+
+The `strcspn` trick (`line[strcspn(line, "\n")] = '\0'`) works by finding the position of the first `\n` and replacing it with a null terminator. If there's no newline (because the line was longer than the buffer), `strcspn` returns the string length and the assignment is harmless.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    // Write lines
+    FILE *fp = fopen("poem.txt", "w");
+    fputs("Roses are red\\n", fp);
+    fputs("Violets are blue\\n", fp);
+    fputs("C is powerful\\n", fp);
+    fputs("And so are you\\n", fp);
+    fclose(fp);
+
+    // Read and process lines
+    fp = fopen("poem.txt", "r");
+    char line[256];
+    int linenum = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        linenum++;
+        // Remove trailing newline
+        line[strcspn(line, "\\n")] = '\\0';
+        printf("%d: %s\\n", linenum, line);
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+**Why fgets is the default safe choice**: You control the maximum read length (preventing buffer overflow), it works with any content (spaces, punctuation, whatever), and it gives you the entire line to parse however you want. The pattern `fgets` + `sscanf` (or `strtok`, or manual parsing) is more code than a single `fscanf`, but it's far more robust.
+
+## Character I/O: fgetc and fputc
+
+Sometimes you need to process a file character by character — counting occurrences, translating characters, or building a custom parser. `fgetc` reads one character at a time and returns it as an `int`.
+
+Why an `int` and not a `char`? Because `fgetc` needs to return **every possible byte value** (0-255) *plus* the special value `EOF` (typically -1) that signals the end of the file. A `char` on most systems only holds 256 distinct values. If `char` is signed, value 255 looks like -1, which is the same as `EOF`. Declaring the variable as `int` avoids this ambiguity.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Write character by character
+    FILE *fp = fopen("chars.txt", "w");
+    for (char c = 'A'; c <= 'Z'; c++) {
+        fputc(c, fp);
+    }
+    fputc('\\n', fp);
+    fclose(fp);
+
+    // Read character by character and count vowels
+    fp = fopen("chars.txt", "r");
+    int ch;
+    int vowels = 0, consonants = 0;
+
+    while ((ch = fgetc(fp)) != EOF) {
+        if (ch == '\\n') continue;
+        if (ch == 'A' || ch == 'E' || ch == 'I' || ch == 'O' || ch == 'U') {
+            vowels++;
+        } else {
+            consonants++;
+        }
+    }
+
+    fclose(fp);
+    printf("Vowels: %d, Consonants: %d\\n", vowels, consonants);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="warning">
+`fgetc` returns an `int`, not a `char`. This is because it needs to return `EOF` (typically -1) which doesn't fit in a `char` on some systems. Always declare the variable as `int`.
+</Callout>
+
+## Reading CSV Data — Putting It Together
+
+Real-world data is often messier than "one integer per line." CSV (comma-separated values) is a common format, and parsing it showcases the `fgets` + manual splitting approach. This is the pattern you'll use whenever `fscanf` isn't structured enough.
+
+The strategy: read each line with `fgets` (safe, predictable), then split each line into fields using `strtok` or `strchr`. You're doing the parsing yourself rather than trusting `fscanf` to get it right.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    // Create CSV data
+    FILE *fp = fopen("data.csv", "w");
+    fprintf(fp, "Name,Age,City\\n");
+    fprintf(fp, "Alice,30,London\\n");
+    fprintf(fp, "Bob,25,Paris\\n");
+    fprintf(fp, "Charlie,35,Tokyo\\n");
+    fclose(fp);
+
+    // Parse CSV
+    fp = fopen("data.csv", "r");
+    char line[256];
+
+    // Skip header
+    fgets(line, sizeof(line), fp);
+
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\\n")] = '\\0';
+
+        char *name = strtok(line, ",");
+        char *age_str = strtok(NULL, ",");
+        char *city = strtok(NULL, ",");
+
+        if (name && age_str && city) {
+            int age = atoi(age_str);
+            printf("%s is %d years old, lives in %s\\n", name, age, city);
+        }
+    }
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## Summary: Which Function When?
+
+| Function | Reads/Writes | Best for | Watch out for |
+|----------|-------------|----------|---------------|
+| `fscanf/fprintf` | Formatted fields | Clean numeric/token data | Breaks on spaces in strings |
+| `fgets/fputs` | Whole lines | General text, messy input | Includes the trailing `\n` |
+| `fgetc/fputc` | Single characters | Character-level processing | Must use `int`, not `char` |
+| `fread/fwrite` | Raw byte blocks | Binary data, structs | Not human-readable |
+
+The golden rule: **when in doubt, use `fgets`**. It's harder to shoot yourself in the foot with `fgets` than with `fscanf`, and you can always parse the line afterward with `sscanf`, `strtok`, or manual character walking.
+
+## sprintf and sscanf — String Formatting and Parsing
+
+Every `f`-prefixed I/O function has a **string** counterpart that works on a character buffer instead of a file stream:
+
+- `sprintf(buf, fmt, ...)` — same as `fprintf`, but writes the formatted result into the string `buf` instead of a file.
+- `sscanf(buf, fmt, ...)` — same as `fscanf`, but reads from the string `buf` instead of a file stream.
+
+Think of these as **"printf/scanf without printing or reading."** `sprintf` *builds* a string; `sscanf` *parses* one.
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // --- sprintf: building formatted strings ---\n    char filename[64];\n    for (int i = 1; i <= 3; i++) {\n        snprintf(filename, sizeof(filename), "log_%03d.txt", i);\n        printf("Would create: %s\\n", filename);\n    }\n\n    // --- sscanf: parsing structured data from a string ---\n    char line[] = "Alice 95 3.8";\n    char name[32];\n    int score;\n    float gpa;\n\n    if (sscanf(line, "%31s %d %f", name, &score, &gpa) == 3) {\n        printf("%s scored %d with GPA %.1f\\n", name, score, gpa);\n    }\n\n    // --- The fgets + sscanf pattern (safest structured input) ---\n    // Read a whole line safely, then parse it:\n    char input[128];\n    int x, y;\n    // Simulate reading from stdin\n    snprintf(input, sizeof(input), "42 17");\n    if (sscanf(input, "%d %d", &x, &y) == 2) {\n        printf("Parsed: x=%d, y=%d\\n", x, y);\n    }\n\n    return 0;\n}\n`} time="O(n)" space="O(n)" />
+
+The `fgets` + `sscanf` pattern is the **safest way to read structured input**. `fgets` guarantees you won't overflow the buffer and gives you a clean line. Then `sscanf` parses that line without ever touching the input stream directly. If the parse fails, you still have the original line to inspect or report as an error — unlike `fscanf`, which has already consumed the bad input and moved the stream position.
+
+<Callout type="warning">
+Always use `snprintf` (with the **n**) instead of `sprintf`. Plain `sprintf` has no way to know how big the destination buffer is — if the formatted string is longer than the buffer, it overflows silently. `snprintf` takes a size argument and truncates instead of overflowing. There is no reason to ever use `sprintf`.
+</Callout>
+
+## ungetc — Pushing Characters Back
+
+`ungetc` pushes a single character back into an input stream, as if it hadn't been read yet. The next `fgetc`, `fgets`, or `fscanf` call on that stream will see the pushed-back character first.
+
+Why would you want this? When building a **parser** that needs to *peek* at the next character to decide what to do. For example, "is the next character a digit or a letter?" You read it to check, then push it back so the appropriate parsing function can re-read it normally.
+
+```c
+// Peek pattern: look at the next char without consuming it
+int ch = fgetc(fp);
+if (ch == '#') {
+    // It's a comment line — skip the rest
+    while ((ch = fgetc(fp)) != '\n' && ch != EOF);
+} else {
+    // Not a comment — put the character back and parse normally
+    ungetc(ch, fp);
+    fscanf(fp, "%d", &value);
+}
+```
+
+<Callout type="info">
+Only **one character** of pushback is guaranteed by the C standard. Pushing back multiple characters before reading may or may not work depending on the implementation. One is all you need for the peek pattern.
+</Callout>
+
+## Exercise: Sum Numbers from Input
+
+<Exercise
+  title="Sum from lines"
+  description="Read lines from stdin, each containing a single integer. Print the sum of all integers."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int sum = 0;
+    int val;
+
+    while (scanf("%d", &val) == 1) {
+        sum += val;
+    }
+
+    printf("%d\\n", sum);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "10\n20\n30", expected_stdout: "60\n" },
+    { stdin: "5", expected_stdout: "5\n" },
+    { stdin: "-1\n-2\n3", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Read integers with scanf until it returns something other than 1.",
+    "Accumulate each value into sum."
+  ]}
+/>
+
+## Exercise: Word Count
+
+<Exercise
+  title="Count words"
+  description="Read all text from stdin. Count the number of whitespace-separated words. Print the count."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    char word[1000];
+    int count = 0;
+
+    while (scanf("%999s", word) == 1) {
+        count++;
+    }
+
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello world foo bar", expected_stdout: "4\n" },
+    { stdin: "one", expected_stdout: "1\n" },
+    { stdin: "  spaces   between   words  ", expected_stdout: "3\n" }
+  ]}
+  hints={[
+    "scanf with %s skips whitespace and reads non-whitespace tokens.",
+    "Each successful scanf call reads one word."
+  ]}
+/>
+
+## Exercise: Parse Key-Value Pairs
+
+<Exercise
+  title="Key-value parser"
+  description="Read lines of 'key=value' pairs (one per line) until EOF. Print each key and value separated by a colon and space."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char line[256];
+
+    while (fgets(line, sizeof(line), stdin)) {
+        line[strcspn(line, "\\n")] = '\\0';
+
+        // Split on '=' and print "key: value"
+
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "name=Alice\nage=30\ncity=London", expected_stdout: "name: Alice\nage: 30\ncity: London\n" },
+    { stdin: "x=1\ny=2", expected_stdout: "x: 1\ny: 2\n" },
+    { stdin: "key=value", expected_stdout: "key: value\n" }
+  ]}
+  hints={[
+    "Use strtok(line, \"=\") to get the key, then strtok(NULL, \"=\") for the value.",
+    "Or use strchr to find the '=' character and split manually.",
+    "Print in format: \"%s: %s\\n\""
+  ]}
+/>
+
+## What's Next
+
+Next: **binary files** — reading and writing raw bytes, struct serialization, and file seeking. When text files aren't enough.

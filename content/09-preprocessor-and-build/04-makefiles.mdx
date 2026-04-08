@@ -1,0 +1,322 @@
+---
+title: "Makefiles"
+module: "The Preprocessor & Build System"
+order: 4
+description: "Automating builds with Make — targets, dependencies, variables, and pattern rules."
+difficulty: "intermediate"
+---
+
+When your project has one file, compiling is easy: `gcc main.c -o main`. When it has fifty files, you don't want to type fifty commands every time you change one line. And you *definitely* don't want to recompile all fifty files when only one changed. This is the problem **Make** solves.
+
+But Make isn't just a script runner. It's a **dependency-aware build engine** that understands which files depend on which other files, and only rebuilds the minimum necessary. To use it well, you need a mental model of how it thinks.
+
+## The Dependency Graph
+
+At its core, Make sees your project as a **directed acyclic graph (DAG)** of files. Each node is a file. Edges point from a file to the things it depends on.
+
+```
+program (executable)
+  |-- main.o
+  |     |-- main.c
+  |     |-- math_utils.h
+  |     |-- string_utils.h
+  |-- math_utils.o
+  |     |-- math_utils.c
+  |     |-- math_utils.h
+  |-- string_utils.o
+        |-- string_utils.c
+        |-- string_utils.h
+```
+
+When you type `make program`, Make walks this graph. It asks: "Does `program` exist? Is it newer than all its dependencies (`main.o`, `math_utils.o`, `string_utils.o`)?" If any dependency is newer, `program` needs to be rebuilt. But first — are the `.o` files themselves up to date? Make recurses down the graph, checking timestamps at every level.
+
+## Why Make Only Rebuilds What Changed
+
+This is the key insight: **Make compares file timestamps.** For each target, it checks: "Is this target's modification time newer than all of its dependencies' modification times?" If yes, the target is up to date — skip it. If any dependency is newer (meaning it was modified more recently), the target is stale and must be rebuilt.
+
+This is why the two-phase build process (compile `.c` to `.o`, then link `.o` files) exists. If you change `math_utils.c`, only `math_utils.o` becomes stale. `main.o` and `string_utils.o` are still fine. Make recompiles just `math_utils.o`, then re-links the final executable. In a project with hundreds of files, this can turn a 10-minute rebuild into a 2-second one.
+
+## Basic Makefile Structure
+
+A Makefile is a collection of **rules**. Each rule has three parts:
+
+```makefile
+target: dependencies
+	command
+```
+
+The **target** is the file to be built. The **dependencies** are files the target needs. The **command** is the shell command to run if the target is stale. Make runs the command only when a dependency is newer than the target (or if the target doesn't exist).
+
+<Callout type="warning">
+Makefile commands **must** be indented with a **tab** character, not spaces. This is a common source of confusing errors. If you see "missing separator", you probably used spaces.
+</Callout>
+
+## A Simple Makefile
+
+```makefile
+# Compile a single-file program
+hello: hello.c
+	gcc -o hello hello.c
+
+# Remove the compiled program
+clean:
+	rm -f hello
+```
+
+Run with:
+```bash
+make          # builds the first target (hello)
+make clean    # removes hello
+```
+
+The first rule in the file is the **default target** — what gets built when you just type `make` with no arguments.
+
+## Multi-File Makefile
+
+Here's where the dependency graph becomes real. Each `.o` file lists its source file *and* the headers it depends on. If you change a header, every `.o` that includes it gets recompiled.
+
+```makefile
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c17
+
+# Final executable depends on object files
+program: main.o math_utils.o string_utils.o
+	$(CC) $(CFLAGS) -o program main.o math_utils.o string_utils.o
+
+# Each .o file depends on its .c file and headers
+main.o: main.c math_utils.h string_utils.h
+	$(CC) $(CFLAGS) -c main.c
+
+math_utils.o: math_utils.c math_utils.h
+	$(CC) $(CFLAGS) -c math_utils.c
+
+string_utils.o: string_utils.c string_utils.h
+	$(CC) $(CFLAGS) -c string_utils.c
+
+clean:
+	rm -f program *.o
+```
+
+Notice the repetition? Every rule repeats `$(CC) $(CFLAGS) -c ...`. The file names are written out multiple times. In a 50-file project, this would be unbearable. That's where variables and pattern rules come in.
+
+## Variables — DRY for Makefiles
+
+Variables eliminate repetition. If you decide to switch from `gcc` to `clang`, you change one line instead of fifty.
+
+```makefile
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c17 -g
+LDFLAGS = -lm
+
+SRCS = main.c math_utils.c string_utils.c
+OBJS = $(SRCS:.c=.o)  # Replace .c with .o
+TARGET = program
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+```
+
+The expression `$(SRCS:.c=.o)` is a **substitution reference** — it takes the value of `SRCS` and replaces every `.c` suffix with `.o`. So `main.c math_utils.c string_utils.c` becomes `main.o math_utils.o string_utils.o`. Adding a new source file means adding it to `SRCS` once, and everything else adapts.
+
+Common variables:
+| Variable | Purpose |
+|----------|---------|
+| `CC` | C compiler (`gcc`, `clang`) |
+| `CFLAGS` | Compiler flags (`-Wall`, `-O2`, `-g`) |
+| `LDFLAGS` | Linker flags (`-lm`, `-pthread`) |
+
+## Automatic Variables
+
+Inside a rule's command, Make provides shorthand variables that refer to parts of the rule itself. These eliminate the last bits of repetition:
+
+| Variable | Meaning |
+|----------|---------|
+| `$@` | The target name |
+| `$<` | The first dependency |
+| `$^` | All dependencies |
+| `$?` | Dependencies newer than the target |
+
+```makefile
+program: main.o utils.o
+	$(CC) $(CFLAGS) -o $@ $^
+# Same as: gcc -Wall -o program main.o utils.o
+```
+
+`$@` is the target (`program`). `$^` expands to all the dependencies (`main.o utils.o`). Now the command doesn't name any specific files — it works generically for any rule with this shape.
+
+## Pattern Rules — One Rule to Build Them All
+
+Instead of writing a separate rule for every `.o` file, a **pattern rule** uses `%` as a wildcard. This single rule tells Make how to build *any* `.o` file from its corresponding `.c` file:
+
+```makefile
+# Any .o file can be built from the corresponding .c file
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+```
+
+`$<` is the first dependency (the `.c` file). `$@` is the target (the `.o` file). This one rule replaces dozens of individual rules. When you add a new `.c` file, you don't need a new rule — the pattern handles it automatically.
+
+## Phony Targets — Commands That Aren't Files
+
+Some targets don't correspond to actual files. `clean` doesn't create a file called `clean` — it removes files. `run` doesn't create a file called `run` — it executes the program. These are **phony targets**.
+
+The problem: if a file named `clean` happened to exist in your directory, Make would check its timestamp, decide it's up to date (it has no dependencies), and skip the command entirely. "Nothing to be done for 'clean'" — a confusing silent failure.
+
+The fix is `.PHONY`, which tells Make "this target is not a file — always run its command":
+
+```makefile
+.PHONY: clean all run
+
+all: program
+
+clean:
+	rm -f program *.o
+
+run: program
+	./program
+```
+
+## A Complete Makefile
+
+Putting it all together — variables for DRY, pattern rules for scalability, phony targets for commands, and explicit header dependencies for correctness:
+
+```makefile
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c17 -g
+LDFLAGS =
+
+SRCS = main.c math_utils.c string_utils.c
+OBJS = $(SRCS:.c=.o)
+TARGET = program
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Header dependencies
+main.o: math_utils.h string_utils.h
+math_utils.o: math_utils.h
+string_utils.o: string_utils.h
+
+clean:
+	rm -f $(TARGET) $(OBJS)
+
+run: $(TARGET)
+	./$(TARGET)
+```
+
+Notice the header dependency lines at the bottom — they have *no commands*. They're pure dependency declarations. They tell Make: "if `math_utils.h` changes, `main.o` is stale." The pattern rule above already knows *how* to rebuild `main.o`; these lines just add extra dependencies to watch.
+
+## Compiler Flags Reference
+
+| Flag | Purpose |
+|------|---------|
+| `-Wall` | Enable common warnings |
+| `-Wextra` | Enable extra warnings |
+| `-Werror` | Treat warnings as errors |
+| `-g` | Include debug symbols |
+| `-O0` | No optimization (best for debugging) |
+| `-O2` | Standard optimization |
+| `-O3` | Aggressive optimization |
+| `-std=c17` | Use C17 standard |
+| `-fsanitize=address` | Detect memory errors at runtime |
+
+## Exercise: Build Order
+
+<Exercise
+  title="Build order simulation"
+  description="Read a list of source files (one per line after N). For each file, print: 'Compiling X.c -> X.o'. Then print 'Linking -> program'. Simulate what Make does."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char files[20][64];
+    for (int i = 0; i < n; i++) {
+        scanf("%s", files[i]);
+    }
+
+    for (int i = 0; i < n; i++) {
+        // Remove .c extension for the .o name
+        char base[64];
+        strcpy(base, files[i]);
+        int len = strlen(base);
+        if (len > 2 && base[len-2] == '.' && base[len-1] == 'c') {
+            base[len-2] = '\\0';
+        }
+        printf("Compiling %s -> %s.o\\n", files[i], base);
+    }
+
+    printf("Linking -> program\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nmain.c math.c utils.c", expected_stdout: "Compiling main.c -> main.o\nCompiling math.c -> math.o\nCompiling utils.c -> utils.o\nLinking -> program\n" },
+    { stdin: "1\nhello.c", expected_stdout: "Compiling hello.c -> hello.o\nLinking -> program\n" },
+    { stdin: "2\nfoo.c bar.c", expected_stdout: "Compiling foo.c -> foo.o\nCompiling bar.c -> bar.o\nLinking -> program\n" }
+  ]}
+  hints={[
+    "Strip the .c extension by setting the character two before the end to '\\0'.",
+    "Print compile steps in order, then the final link step.",
+    "This simulates the two-phase build process: compile .c -> .o, then link all .o files."
+  ]}
+/>
+
+## Exercise: Flag Parser
+
+<Exercise
+  title="Parse compiler flags"
+  description="Read a line of compiler flags. Count and print how many are warning flags (start with -W), optimization flags (start with -O), and other flags."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int warnings = 0, optimizations = 0, other = 0;
+
+    for (int i = 0; i < n; i++) {
+        char flag[64];
+        scanf("%s", flag);
+        if (flag[0] == '-' && flag[1] == 'W') {
+            warnings++;
+        } else if (flag[0] == '-' && flag[1] == 'O') {
+            optimizations++;
+        } else {
+            other++;
+        }
+    }
+
+    printf("Warnings: %d\\n", warnings);
+    printf("Optimizations: %d\\n", optimizations);
+    printf("Other: %d\\n", other);
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n-Wall -Wextra -O2 -g -std=c17", expected_stdout: "Warnings: 2\nOptimizations: 1\nOther: 2\n" },
+    { stdin: "3\n-Wall -Werror -Wpedantic", expected_stdout: "Warnings: 3\nOptimizations: 0\nOther: 0\n" },
+    { stdin: "4\n-O0 -O2 -g -lm", expected_stdout: "Warnings: 0\nOptimizations: 2\nOther: 2\n" }
+  ]}
+  hints={[
+    "Check the first two characters of each flag.",
+    "Flags starting with -W are warning flags.",
+    "Flags starting with -O are optimization flags. Everything else is 'other'."
+  ]}
+/>
+
+## What's Next
+
+With preprocessor knowledge and build tools under our belt, we move to **bitwise operations and low-level programming** — working directly with individual bits.

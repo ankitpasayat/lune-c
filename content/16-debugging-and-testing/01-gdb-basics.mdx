@@ -1,0 +1,277 @@
+---
+title: "GDB Basics"
+module: "Debugging & Testing"
+order: 1
+description: "Use GDB to set breakpoints, step through code, inspect variables, and debug crashes."
+difficulty: "intermediate"
+---
+
+Every C programmer eventually hits a bug that `printf` can't solve. Maybe the program crashes with no output at all. Maybe it corrupts memory ten lines before the actual crash. Maybe an off-by-one error only shows up when the input has exactly 1,000 items and you can't figure out which iteration goes wrong.
+
+This is where a **debugger** comes in. GDB (the GNU Debugger) gives you something `printf` never can: the ability to **freeze a running program in time**, examine exactly what's happening at any point in execution, and step through your code one line at a time. Think of it as a time machine for your program — you can set "bookmarks" (breakpoints) at interesting moments, travel to them, look around at every variable and call, then continue forward at your own pace.
+
+## Compiling for Debugging
+
+Before GDB can help you, it needs a map. When the compiler turns your C code into machine instructions, it normally throws away all the names — variable names, function names, line numbers. The `-g` flag tells the compiler to keep this information, embedding a lookup table called **debug symbols** into the binary. These symbols are the map from raw addresses back to your source code.
+
+```
+gcc -g -o program program.c
+```
+
+Without `-g`, GDB can show you raw assembly and memory addresses, but not the source lines or human-readable names. It's like trying to navigate a city with a street map versus GPS coordinates — technically possible, but painful.
+
+<Callout type="tip">
+Also add `-O0` to disable optimizations. When the compiler optimizes, it reorders, combines, and eliminates statements. A variable you declared might not exist in the optimized code. A loop might be unrolled. Stepping through optimized code in GDB feels like reading a book with the pages shuffled: `gcc -g -O0 -o program program.c`
+</Callout>
+
+## Starting GDB
+
+```
+gdb ./program          # Start debugging
+gdb --args ./prog a b  # Pass command-line arguments
+```
+
+Once inside GDB, you're in a conversation with your program. You tell it where to pause, when to proceed, and what to show you. Here are the core commands — you'll use these constantly:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Compile: gcc -g -O0 -o demo demo.c
+// Run:     gdb ./demo
+
+// GDB Command Reference:
+//
+// RUNNING:
+//   run (r)              - Start/restart the program
+//   run arg1 arg2        - Run with arguments
+//   quit (q)             - Exit GDB
+//
+// BREAKPOINTS:
+//   break main           - Break at function
+//   break 15             - Break at line 15
+//   break file.c:20      - Break at line 20 of file.c
+//   info breakpoints     - List all breakpoints
+//   delete 1             - Delete breakpoint #1
+//   disable 2            - Temporarily disable #2
+//
+// STEPPING:
+//   next (n)             - Execute next line (step OVER functions)
+//   step (s)             - Execute next line (step INTO functions)
+//   continue (c)         - Run until next breakpoint
+//   finish               - Run until current function returns
+//
+// INSPECTING:
+//   print x              - Print variable x
+//   print *ptr           - Dereference pointer
+//   print arr[0]@10      - Print 10 elements of arr
+//   info locals          - Show all local variables
+//   backtrace (bt)       - Show call stack
+//   frame 2              - Switch to stack frame #2
+//
+// WATCHING:
+//   watch x              - Break when x changes
+//   display x            - Print x after every step
+
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+int main() {
+    // Try debugging this with GDB
+    int result = factorial(5);
+    printf("5! = %d\\n", result);
+
+    int arr[] = {10, 20, 30, 40, 50};
+    int sum = 0;
+    for (int i = 0; i < 5; i++) {
+        sum += arr[i];
+    }
+    printf("Sum = %d\\n", sum);
+
+    return 0;
+}
+`} />
+
+The key mental model is the difference between `next` and `step`. Imagine you're reading a recipe. `next` says "do the next instruction and tell me the result" — if it says "make the sauce," you get the finished sauce. `step` says "show me the sub-recipe for making the sauce" — you dive into the function. Use `next` when you trust a function works correctly; use `step` when you suspect the bug is inside it.
+
+## Debugging a Crash
+
+When your program segfaults, most output is gone. `printf` debugging is useless because the crash might happen before the output buffer flushes. But GDB catches the crash in the act. It freezes the program at the exact instruction that caused the fault, and you can use `backtrace` to see the entire chain of function calls that led there.
+
+This is the standard crash debugging workflow:
+
+1. `gdb ./program` — load the program
+2. `run` — let it execute until it crashes  
+3. `bt` (backtrace) — see WHERE it crashed and the call chain
+4. `frame N` — jump to any frame in the chain to examine context
+5. `info locals` — see what variables looked like at that point
+6. `print expr` — evaluate any expression in that frame's context
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Common crash scenarios and how to debug them
+
+void crash_null_deref(void) {
+    int *p = NULL;
+    // *p = 42;  // SEGFAULT! GDB would show this exact line
+    printf("(null dereference — commented out for safety)\\n");
+}
+
+void crash_buffer_overflow(void) {
+    char buf[10];
+    // strcpy(buf, "this string is way too long for the buffer");
+    printf("(buffer overflow — commented out for safety)\\n");
+}
+
+void crash_use_after_free(void) {
+    int *p = malloc(sizeof(int));
+    *p = 42;
+    free(p);
+    // printf("%d\\n", *p);  // Undefined behavior!
+    printf("(use after free — commented out for safety)\\n");
+}
+
+void crash_stack_overflow(void) {
+    // void infinite() { infinite(); }  // Stack overflow
+    printf("(stack overflow — commented out for safety)\\n");
+}
+
+int main() {
+    printf("Common crash causes:\\n\\n");
+
+    printf("1. NULL pointer dereference\\n");
+    printf("   GDB: 'run' then 'bt' to see where\\n");
+    crash_null_deref();
+
+    printf("\\n2. Buffer overflow\\n");
+    printf("   GDB: 'print buf' to see corrupted memory\\n");
+    crash_buffer_overflow();
+
+    printf("\\n3. Use after free\\n");
+    printf("   GDB: 'watch *p' to catch the access\\n");
+    crash_use_after_free();
+
+    printf("\\n4. Stack overflow (infinite recursion)\\n");
+    printf("   GDB: 'bt' shows the repeated call frames\\n");
+    crash_stack_overflow();
+
+    printf("\\nGDB workflow for crashes:\\n");
+    printf("  1. gdb ./program\\n");
+    printf("  2. run\\n");
+    printf("  3. (crash happens)\\n");
+    printf("  4. bt          — see where it crashed\\n");
+    printf("  5. frame N     — examine specific frame\\n");
+    printf("  6. info locals — check variable values\\n");
+    printf("  7. print expr  — evaluate expressions\\n");
+
+    return 0;
+}
+`} />
+
+## Conditional Breakpoints
+
+When you have a bug that only appears on the 99th iteration of a loop, you don't want to hit `next` 99 times. Conditional breakpoints let you tell GDB: "only stop here when this expression is true." This is the single biggest time-saver over `printf` debugging — with `printf`, you'd need to add a conditional print, recompile, and re-run. With GDB, you just type:
+
+```
+break 25 if i == 99        # Break at line 25 only when i is 99
+break func if x > 100      # Break in func when x exceeds 100
+```
+
+## Why Learn GDB Even If You Have an IDE
+
+Modern IDEs have graphical debuggers with "click to add breakpoint" and variable inspection panels. They're great for everyday use. But GDB gives you capabilities that no GUI can:
+
+- **Remote debugging**: Your program runs on a server or embedded device, and you debug it from your laptop over SSH. This is the only option for headless servers and production crashes.
+- **Core dump analysis**: When a program crashes in production, the OS can save a snapshot of its memory (a "core dump"). GDB can open this snapshot and let you inspect the state at the moment of the crash — days or weeks later, on a different machine.
+- **Scripting**: GDB has a built-in scripting language. You can automate complex debugging workflows, like "every time function X is called, print parameter Y and continue."
+
+Learning GDB is like learning the command line versus a file manager — more effort up front, but vastly more powerful in the situations that matter most.
+
+## Exercise: Spot the Bug
+
+<Exercise
+  title="Fix the off-by-one"
+  description="This program should compute the sum of N numbers read from stdin. Read N, then N integers, print their sum. The starter code has a bug — find and fix it."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i <= n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int sum = 0;
+    for (int i = 1; i < n; i++) {
+        sum += arr[i];
+    }
+
+    printf("%d\\n", sum);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n10 20 30", expected_stdout: "60\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "15\n" },
+    { stdin: "4\n-1 2 -3 4", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "The first loop reads too many values: i <= n should be i < n.",
+    "The sum loop skips the first element: i = 1 should be i = 0.",
+    "In GDB, you'd set a breakpoint in the loop and 'print i' to see the issue."
+  ]}
+/>
+
+## Exercise: Debug Array Reversal
+
+<Exercise
+  title="Fix the array reverse"
+  description="This program reads N integers and prints them in reverse order, space-separated. The starter code has bugs — fix them."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Reverse in place
+    for (int i = 0; i < n; i++) {
+        int temp = arr[i];
+        arr[i] = arr[n - i];
+        arr[n - i] = temp;
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "5 4 3 2 1\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "30 20 10\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "4\n1 2 3 4", expected_stdout: "4 3 2 1\n" }
+  ]}
+  hints={[
+    "arr[n - i] is out of bounds when i = 0. Should be arr[n - 1 - i].",
+    "The loop swaps the entire array, then swaps it back. Loop only up to n / 2.",
+    "Fix: for (int i = 0; i < n / 2; i++) swap arr[i] with arr[n - 1 - i]."
+  ]}
+/>
+
+## What's Next
+
+Next: **Valgrind** — detecting memory leaks and invalid memory access automatically.

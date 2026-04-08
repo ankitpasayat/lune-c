@@ -1,0 +1,6 @@
+{
+  "title": "The Preprocessor & Build System",
+  "order": 9,
+  "phase": 3,
+  "description": "Macros, include guards, multi-file projects, and Makefiles — how C code is built."
+}

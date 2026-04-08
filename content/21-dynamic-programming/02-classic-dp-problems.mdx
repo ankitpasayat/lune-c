@@ -1,0 +1,407 @@
+---
+title: "Classic DP Problems"
+module: "dynamic-programming"
+order: 2
+description: "Master foundational DP patterns: coin change, longest common subsequence, and 0/1 knapsack."
+difficulty: "intermediate"
+---
+
+# Classic DP Problems
+
+In the last lesson, we learned the process: write a recursive solution, spot the
+overlap, add a cache. Now let's apply that to three problems that look completely
+different on the surface but each teach you a fundamental DP pattern.
+
+## Coin Change: When Greedy Lies to You
+
+**Problem:** Given coin denominations and a target amount, find the minimum number
+of coins needed. Each coin can be used unlimited times.
+
+Your first instinct is probably greedy: always pick the largest coin that fits. With
+US coins (25¢, 10¢, 5¢, 1¢), that works perfectly. It's what you do in real life.
+
+But try coins `{1, 3, 4}` with amount `6`:
+- Greedy picks: 4 + 1 + 1 = **3 coins**
+- Optimal: 3 + 3 = **2 coins**
+
+Greedy failed because taking the "best-looking" coin (4) cut off a path to a better
+global solution. This is exactly the kind of problem where DP shines — we need to
+consider multiple paths and pick the best one.
+
+### Deriving the Recurrence
+
+Let's think step by step. Suppose we want `minCoins(amount)`.
+
+At some point, we used our *last* coin. That last coin had some value — call it `c`.
+Before we used it, we had already made change for `amount - c`. So:
+
+> `minCoins(amount)` = 1 + `minCoins(amount - c)`
+
+But which coin `c` was the last one? We don't know — so we try **all** of them and
+take the minimum:
+
+> `minCoins(amount)` = min over all coins c: `1 + minCoins(amount - c)`
+
+Base case: `minCoins(0) = 0` (zero coins needed for amount zero).
+
+That's the recurrence. Now let's implement it with tabulation:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+int min_coins(int coins[], int n, int amount) {
+    int dp[amount + 1];
+    dp[0] = 0;  // 0 coins needed for amount 0
+
+    for (int i = 1; i <= amount; i++) {
+        dp[i] = INT_MAX;  // assume impossible until proven otherwise
+
+        // Try each coin as the "last coin used"
+        for (int j = 0; j < n; j++) {
+            if (coins[j] <= i && dp[i - coins[j]] != INT_MAX) {
+                int candidate = dp[i - coins[j]] + 1;
+                if (candidate < dp[i]) {
+                    dp[i] = candidate;
+                }
+            }
+        }
+    }
+    return dp[amount] == INT_MAX ? -1 : dp[amount];
+}
+
+int main(void) {
+    int coins[] = {1, 3, 4};
+    int n = 3;
+
+    for (int amount = 0; amount <= 10; amount++) {
+        printf("amount %2d: %d coins\\n", amount, min_coins(coins, n, amount));
+    }
+    return 0;
+}
+`} />
+
+<Complexity time="O(amount × coins)" space="O(amount)" />
+
+Study the output. Notice how `dp[6] = 2` (using 3+3), not 3 (using 4+1+1). The DP
+explored both choices and kept the better one.
+
+<Callout type="info">
+This is the **unbounded knapsack** pattern: for each "capacity" (amount), try every
+"item" (coin) and pick the best. You'll see this structure again and again — any time
+you have a target value and a set of choices that can be reused.
+</Callout>
+
+## Longest Common Subsequence: Two-Dimensional DP
+
+So far, our DP table has been a single array indexed by one thing (amount, or step
+number). Many problems need **two dimensions**.
+
+**Problem:** Given two strings, find the length of their longest common subsequence.
+A subsequence is characters in order, but not necessarily contiguous.
+
+Example: `"ABCBDAB"` and `"BDCAB"` → LCS is `"BCAB"` (length 4).
+
+### Building the Intuition
+
+Imagine comparing the two strings character by character, starting from the end.
+Let `s1 = "ABCBDAB"` and `s2 = "BDCAB"`.
+
+Compare the last characters: `s1[6] = 'B'` and `s2[4] = 'B'`. They match! So this
+`'B'` is part of the LCS, and the remaining problem is: find the LCS of `"ABCBDA"` and `"BDCA"`.
+
+But what if the last characters didn't match? Then at least one of them is NOT in the
+LCS. We don't know which one, so we try both:
+- Drop the last character of s1 and solve for `(s1[0..m-2], s2[0..n-1])`
+- Drop the last character of s2 and solve for `(s1[0..m-1], s2[0..n-2])`
+- Take the better answer.
+
+This gives us a recurrence with TWO parameters — the length of each string under
+consideration:
+
+```
+if s1[i-1] == s2[j-1]:
+    dp[i][j] = dp[i-1][j-1] + 1      // match! include it.
+else:
+    dp[i][j] = max(dp[i-1][j],       // drop from s1
+                   dp[i][j-1])        // drop from s2
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int lcs(const char *s1, const char *s2) {
+    int m = strlen(s1);
+    int n = strlen(s2);
+    int dp[m + 1][n + 1];
+
+    // Base case: if either string is empty, LCS is 0
+    for (int i = 0; i <= m; i++) dp[i][0] = 0;
+    for (int j = 0; j <= n; j++) dp[0][j] = 0;
+
+    for (int i = 1; i <= m; i++) {
+        for (int j = 1; j <= n; j++) {
+            if (s1[i - 1] == s2[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j] > dp[i][j - 1]
+                         ? dp[i - 1][j] : dp[i][j - 1];
+            }
+        }
+    }
+
+    // Let's also print the table to see what's happening
+    printf("    ");
+    for (int j = 0; j < n; j++) printf("  %c", s2[j]);
+    printf("\\n");
+    for (int i = 0; i <= m; i++) {
+        if (i > 0) printf("%c ", s1[i - 1]);
+        else printf("  ");
+        for (int j = 0; j <= n; j++) {
+            printf("%2d ", dp[i][j]);
+        }
+        printf("\\n");
+    }
+    printf("\\nLCS length: %d\\n", dp[m][n]);
+    return dp[m][n];
+}
+
+int main(void) {
+    lcs("ABCBDAB", "BDCAB");
+    return 0;
+}
+`} />
+
+<Complexity time="O(m × n)" space="O(m × n)" />
+
+Study the printed table. Each cell `dp[i][j]` is the LCS length for the first `i`
+characters of s1 and first `j` characters of s2. The answer is always in the
+bottom-right corner.
+
+<Callout type="tip">
+**Reading a DP table is a skill.** Follow any cell back to where its value came from:
+diagonally up-left for a match, or up/left for the max of the two. This backtracking
+through the table is how you reconstruct the actual LCS, not just its length.
+</Callout>
+
+The space can be reduced to O(min(m,n)) since each row only depends on the
+previous row — but the 2D table is essential for understanding the structure.
+
+## 0/1 Knapsack: The Decision Pattern
+
+This is perhaps the most important DP pattern. Once you understand it, you'll see it
+everywhere.
+
+**Problem:** You have `n` items, each with a weight and value. Your knapsack holds
+at most `W` units of weight. Each item is all-or-nothing (you can't take half a book).
+Maximize the total value.
+
+### Why Not Greedy?
+
+You might think: just take the items with the highest value-to-weight ratio first.
+
+Items: `{weight=3, value=4}`, `{weight=4, value=5}`, `{weight=2, value=3}`. Capacity=5.
+- By ratio: item 3 (1.5), item 1 (1.33), item 2 (1.25). Take item 3 (w=2) + item 1 (w=3) = value 7.
+- But item 2 (w=4) + item 3 (w=2) is too heavy (w=6). So greedy gives 7.
+- Is there better? Item 1 (w=3) + item 3 (w=2) = value 7. Item 2 (w=4) alone = value 5.
+- Greedy happened to be optimal here, but small changes can break it. With different numbers, greedy fails.
+
+The fundamental issue: taking one item affects which other items you CAN take. Greedy
+doesn't account for these interactions. DP does — by systematically considering every
+"take or skip" decision.
+
+### The Decision at Each Item
+
+For each item, you have exactly two choices: **take it** or **skip it**.
+
+If you skip item `i`, your best value is whatever you could get with the first `i-1`
+items and the same capacity.
+
+If you take item `i`, you gain `value[i]` but lose `weight[i]` capacity. Your best
+value is `value[i]` plus whatever you could get with the first `i-1` items and
+`W - weight[i]` remaining capacity.
+
+So: `dp[i][w] = max(skip, take)`
+
+```
+skip = dp[i-1][w]
+take = value[i] + dp[i-1][w - weight[i]]    (only if weight[i] <= w)
+dp[i][w] = max(skip, take)
+```
+
+Two parameters define our state: which items we've considered (`i`) and how much
+capacity remains (`w`). This creates a 2D table:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int knapsack(int W, int weights[], int values[], int n) {
+    int dp[n + 1][W + 1];
+
+    for (int i = 0; i <= n; i++) {
+        for (int w = 0; w <= W; w++) {
+            if (i == 0 || w == 0) {
+                dp[i][w] = 0;  // no items or no capacity = no value
+            } else if (weights[i - 1] <= w) {
+                int take = values[i - 1] + dp[i - 1][w - weights[i - 1]];
+                int skip = dp[i - 1][w];
+                dp[i][w] = take > skip ? take : skip;
+            } else {
+                dp[i][w] = dp[i - 1][w];  // too heavy, must skip
+            }
+        }
+    }
+
+    // Print the table
+    printf("    ");
+    for (int w = 0; w <= W; w++) printf("%3d", w);
+    printf("\\n");
+    for (int i = 0; i <= n; i++) {
+        printf("i=%d ", i);
+        for (int w = 0; w <= W; w++) {
+            printf("%3d", dp[i][w]);
+        }
+        printf("\\n");
+    }
+    printf("\\nMax value: %d\\n", dp[n][W]);
+    return dp[n][W];
+}
+
+int main(void) {
+    int weights[] = {1, 3, 4, 5};
+    int values[]  = {1, 4, 5, 7};
+    int W = 7, n = 4;
+
+    printf("Items: ");
+    for (int i = 0; i < n; i++)
+        printf("(w=%d,v=%d) ", weights[i], values[i]);
+    printf("\\nCapacity: %d\\n\\n", W);
+
+    knapsack(W, weights, values, n);
+    return 0;
+}
+`} />
+
+<Complexity time="O(n × W)" space="O(n × W)" />
+
+### Space Optimization: Why Right-to-Left?
+
+Since row `i` only looks at row `i-1`, we can use a single 1D array. But there's a
+subtlety. When computing `dp[w]`, we need `dp[w - weight[i]]` from the PREVIOUS row.
+If we iterate left-to-right, we'd overwrite values we still need. So we go right-to-left:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int knapsack_opt(int W, int weights[], int values[], int n) {
+    int dp[W + 1];
+    memset(dp, 0, sizeof(dp));
+
+    for (int i = 0; i < n; i++) {
+        // Right to left! This ensures dp[w - weights[i]]
+        // still has the value from the PREVIOUS item's row.
+        for (int w = W; w >= weights[i]; w--) {
+            int take = values[i] + dp[w - weights[i]];
+            if (take > dp[w]) {
+                dp[w] = take;
+            }
+        }
+    }
+    return dp[W];
+}
+
+int main(void) {
+    int n, W;
+    scanf("%d %d", &n, &W);
+
+    int weights[n], values[n];
+    for (int i = 0; i < n; i++) {
+        scanf("%d %d", &weights[i], &values[i]);
+    }
+
+    printf("%d\\n", knapsack_opt(W, weights, values, n));
+    return 0;
+}
+`} stdin="4 7\n1 1\n3 4\n4 5\n5 7" />
+
+<Complexity time="O(n × W)" space="O(W)" />
+
+<Callout type="warning">
+If you iterate left-to-right, you get the **unbounded knapsack** (items can be reused) —
+because `dp[w - weight[i]]` would use the current row's value, effectively allowing
+the same item again. The iteration direction changes the problem!
+</Callout>
+
+## The Three Patterns So Far
+
+| Pattern | State | Transition | Example |
+|---------|-------|-----------|---------|
+| **1D optimization** | One parameter (amount, step) | Try all choices, take best | Coin change, climbing stairs |
+| **Two-sequence** | Two indices (i into s1, j into s2) | Match or skip from either | LCS, edit distance |
+| **Take-or-skip** | Item index + remaining capacity | max(take, skip) | 0/1 Knapsack |
+
+Every new DP problem you see will fit into one of these patterns or a combination.
+
+## Exercise: Coin Change (Number of Ways)
+
+<Exercise
+  title="Coin Change — Count Ways"
+  description="Given coin denominations and a target amount, count the total number of ways to make change. Each coin can be used unlimited times. Read n (number of coin types), then n coin values, then the target amount. Print the number of ways."
+  starterCode={`#include <stdio.h>
+
+int main(void) {
+    int n;
+    scanf("%d", &n);
+
+    int coins[n];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &coins[i]);
+    }
+
+    int amount;
+    scanf("%d", &amount);
+
+    // Your DP solution here
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 2 5\n5", expected_stdout: "4\n" },
+    { stdin: "2\n1 2\n4", expected_stdout: "3\n" },
+    { stdin: "1\n3\n7", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "dp[i] = number of ways to make amount i. dp[0] = 1 (one way to make 0: use no coins).",
+    "Process coins one at a time. For each coin, update dp[j] += dp[j - coin] for j from coin to amount.",
+    "The outer loop is over coins (not amounts) to avoid counting permutations as different combinations."
+  ]}
+/>
+
+## Exercise: Longest Common Subsequence (Print It)
+
+<Exercise
+  title="Print the LCS"
+  description="Given two strings, print the actual longest common subsequence (not just its length). If multiple LCS exist, print any one. Read two strings on separate lines."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    char s1[101], s2[101];
+    scanf("%s", s1);
+    scanf("%s", s2);
+
+    // Build the DP table and backtrack to find the LCS
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "AGGTAB\nGXTXAYB", expected_stdout: "GTAB\n" },
+    { stdin: "ABC\nABC", expected_stdout: "ABC\n" },
+    { stdin: "ABC\nDEF", expected_stdout: "\n" }
+  ]}
+  hints={[
+    "First build the DP table the same way as the LCS length problem.",
+    "To reconstruct: start at dp[m][n]. If s1[i-1]==s2[j-1], that character is in the LCS — add it and move diagonally (i-1,j-1). Otherwise move in the direction of the larger value.",
+    "Build the LCS string backwards (from end to start), then reverse it before printing."
+  ]}
+/>

@@ -1,0 +1,226 @@
+---
+title: "Macros"
+module: "The Preprocessor & Build System"
+order: 2
+description: "Function-like macros, variadic macros, common pitfalls, and when to use them."
+difficulty: "intermediate"
+---
+
+Macros go beyond simple constants. Function-like macros perform text substitution with parameters — powerful but treacherous.
+
+## Function-Like Macros
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define SQUARE(x) ((x) * (x))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define ABS(x) ((x) < 0 ? -(x) : (x))
+
+int main() {
+    printf("SQUARE(5) = %d\\n", SQUARE(5));
+    printf("MAX(3, 7) = %d\\n", MAX(3, 7));
+    printf("MIN(3, 7) = %d\\n", MIN(3, 7));
+    printf("ABS(-42) = %d\\n", ABS(-42));
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+**Always parenthesize macro parameters and the whole expression!** Without parentheses, operator precedence can cause bugs. `SQUARE(x)` defined as `x * x` would make `SQUARE(1+2)` expand to `1+2 * 1+2 = 5` instead of `9`.
+</Callout>
+
+## Macro Pitfalls
+
+### Double Evaluation
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define SQUARE(x) ((x) * (x))
+
+int main() {
+    int a = 3;
+    printf("SQUARE(a++) = %d\\n", SQUARE(a++));
+    // Expands to: ((a++) * (a++))
+    // a is incremented TWICE! Result is undefined behavior.
+
+    printf("a is now %d (expected 4, got something else)\\n", a);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Never pass expressions with side effects (like `a++`) to macros. They get evaluated multiple times. Use inline functions instead when this matters.
+</Callout>
+
+### Missing Parentheses
+
+```c
+// BAD: missing outer parens
+#define DOUBLE(x) (x) + (x)
+int y = 10 * DOUBLE(3);  // 10 * (3) + (3) = 33, not 60!
+
+// GOOD: fully parenthesized
+#define DOUBLE(x) ((x) + (x))
+int y = 10 * DOUBLE(3);  // 10 * ((3) + (3)) = 60 ✓
+```
+
+## Stringify and Token Pasting
+
+Two special operators for macros:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// # turns a parameter into a string literal
+#define PRINT_VAR(x) printf(#x " = %d\\n", x)
+
+// ## concatenates tokens
+#define MAKE_FUNC(name) int get_##name() { return name; }
+
+int width = 100;
+int height = 200;
+MAKE_FUNC(width)
+MAKE_FUNC(height)
+
+int main() {
+    int a = 42;
+    int b = 17;
+    PRINT_VAR(a);  // expands to: printf("a" " = %d\n", a);
+    PRINT_VAR(b);
+
+    printf("width from func: %d\\n", get_width());
+    printf("height from func: %d\\n", get_height());
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Multi-Line Macros
+
+Use backslash for continuation and `do { ... } while(0)` for safety:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// BAD: naked block can break in if-else
+// #define LOG(msg) { printf("[LOG] "); printf(msg); printf("\\n"); }
+
+// GOOD: do-while-0 idiom
+#define LOG(msg) do { \\
+    printf("[LOG] "); \\
+    printf("%s", msg); \\
+    printf("\\n"); \\
+} while(0)
+
+#define SWAP(a, b, type) do { \\
+    type _temp = (a); \\
+    (a) = (b); \\
+    (b) = _temp; \\
+} while(0)
+
+int main() {
+    LOG("Starting program");
+
+    int x = 10, y = 20;
+    printf("Before: x=%d, y=%d\\n", x, y);
+    SWAP(x, y, int);
+    printf("After:  x=%d, y=%d\\n", x, y);
+
+    LOG("Done");
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+The `do { ... } while(0)` wrapper ensures the macro works correctly inside `if` statements. Without it, `if (cond) LOG("x"); else ...` would break because the compiler sees the semicolons differently.
+</Callout>
+
+## Variadic Macros
+
+Accept a variable number of arguments:
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define DEBUG_PRINT(fmt, ...) \\
+    fprintf(stderr, "[DEBUG %s:%d] " fmt "\\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
+int main() {
+    int x = 42;
+    float y = 3.14;
+
+    DEBUG_PRINT("x = %d", x);
+    DEBUG_PRINT("y = %.2f", y);
+    DEBUG_PRINT("x = %d, y = %.2f", x, y);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Macros vs Inline Functions
+
+| Feature | Macros | Inline Functions |
+|---------|--------|-----------------|
+| Type safety | None | Full |
+| Debug symbols | No | Yes |
+| Evaluate args | Multiple times | Once |
+| Code generation | Text replacement | Compiler decides |
+| Scope | Global | Normal C scoping |
+
+**Rule of thumb**: prefer `static inline` functions for most cases. Use macros only when you need text manipulation (`#`, `##`), conditional compilation, or generic-type behavior.
+
+## Exercise: Safe MAX Macro
+
+<Exercise
+  title="Find the maximum"
+  description="Read two integers A and B. Print the larger one. (In a real macro, you'd use #define MAX(a,b), but use a regular comparison here.)"
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int a, b;
+    scanf("%d %d", &a, &b);
+    printf("%d\\n", a > b ? a : b);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 7", expected_stdout: "7\n" },
+    { stdin: "10 10", expected_stdout: "10\n" },
+    { stdin: "-5 -3", expected_stdout: "-3\n" }
+  ]}
+  hints={[
+    "Use the ternary operator: a > b ? a : b",
+    "This is what the MAX macro expands to internally."
+  ]}
+/>
+
+## Exercise: Stringify
+
+<Exercise
+  title="Print variable names"
+  description="Read three integers. Print each as 'a = N', 'b = N', 'c = N' on separate lines."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int a, b, c;
+    scanf("%d %d %d", &a, &b, &c);
+    printf("a = %d\\n", a);
+    printf("b = %d\\n", b);
+    printf("c = %d\\n", c);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1 2 3", expected_stdout: "a = 1\nb = 2\nc = 3\n" },
+    { stdin: "0 0 0", expected_stdout: "a = 0\nb = 0\nc = 0\n" },
+    { stdin: "-1 42 100", expected_stdout: "a = -1\nb = 42\nc = 100\n" }
+  ]}
+  hints={[
+    "In real code, you'd use: #define PRINT(x) printf(#x \" = %d\\n\", x)",
+    "The # operator turns the parameter name into a string literal."
+  ]}
+/>
+
+## What's Next
+
+Next: **multi-file projects** — splitting code across multiple `.c` and `.h` files.

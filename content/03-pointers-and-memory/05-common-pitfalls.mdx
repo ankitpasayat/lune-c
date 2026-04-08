@@ -1,0 +1,171 @@
+---
+title: "Common Pitfalls"
+module: "Pointers and Memory"
+order: 5
+description: "Memory leaks, dangling pointers, buffer overflows, double free, and how to avoid them."
+difficulty: "advanced"
+---
+
+Memory bugs in C are notoriously hard to find. They often don't cause immediate crashes — instead, they corrupt data silently and cause failures later. Let's learn to recognize and avoid the most common ones.
+
+## Memory Leaks
+
+A memory leak occurs when you allocate memory but never free it:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdlib.h>\n\n// BAD: leaks memory\nvoid leak_example() {\n    int *arr = malloc(100 * sizeof(int));\n    // ... use arr ...\n    // Forgot to call free(arr)!\n    // When this function returns, the pointer is lost\n    // but the memory is still allocated.\n}\n\n// GOOD: properly frees memory\nvoid good_example() {\n    int *arr = malloc(100 * sizeof(int));\n    if (arr == NULL) return;\n    // ... use arr ...\n    free(arr);  // Always free when done\n}\n\nint main() {\n    // In a long-running program, leaks accumulate\n    // and can eventually exhaust all available memory\n    for (int i = 0; i < 5; i++) {\n        leak_example();  // Leaks 400 bytes each call\n    }\n    printf("Leaked some memory (you won't see an error)\\n");\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Memory leaks don't crash your program immediately. They're slow poison — your program gradually consumes more and more memory until the system runs out. Tools like **Valgrind** (covered later) detect leaks automatically.
+</Callout>
+
+Common leak patterns:
+- Forgetting to free before returning from a function
+- Overwriting a pointer without freeing the old allocation
+- Early returns that skip the `free` call
+
+## Dangling Pointers
+
+A dangling pointer points to memory that has already been freed:
+
+```c
+int *p = malloc(sizeof(int));
+*p = 42;
+free(p);
+
+// p still holds the old address, but the memory is freed
+printf("%d\n", *p);  // UNDEFINED BEHAVIOR
+*p = 10;             // UNDEFINED BEHAVIOR
+```
+
+**Prevention**: Set pointers to NULL after freeing:
+```c
+free(p);
+p = NULL;  // Now *p will segfault instead of silently corrupting data
+```
+
+## Use-After-Free
+
+A specific case of dangling pointers — using memory after it's been freed:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <stdlib.h>\n\nint main() {\n    int *a = malloc(5 * sizeof(int));\n    if (a == NULL) return 1;\n    \n    for (int i = 0; i < 5; i++) a[i] = i * 10;\n    \n    printf("Before free: a[0] = %d\\n", a[0]);\n    \n    free(a);\n    a = NULL;  // Safety: prevents accidental use\n    \n    // If we hadn't set a to NULL, we might accidentally:\n    // printf("%d\\n", a[0]);  // Use-after-free!\n    \n    if (a == NULL) {\n        printf("Pointer is NULL — safe!\\n");\n    }\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+## Double Free
+
+Freeing the same memory twice causes undefined behavior:
+
+```c
+int *p = malloc(sizeof(int));
+free(p);
+free(p);  // DOUBLE FREE — undefined behavior, potential crash
+```
+
+This can corrupt the memory allocator's internal data structures, leading to crashes or security vulnerabilities.
+
+**Prevention**: Set to NULL after free — `free(NULL)` is safe and does nothing:
+```c
+free(p);
+p = NULL;
+free(p);  // Safe: free(NULL) is a no-op
+```
+
+## Buffer Overflow
+
+Writing beyond the bounds of an allocated buffer:
+
+```c
+int *arr = malloc(5 * sizeof(int));
+
+// Writing past the end
+for (int i = 0; i <= 5; i++) {  // Bug: should be i < 5
+    arr[i] = i;  // arr[5] is out of bounds!
+}
+```
+
+Buffer overflows are the #1 source of security vulnerabilities in C. They can allow attackers to:
+- Crash programs
+- Execute arbitrary code
+- Read sensitive data from memory
+
+<Callout type="warning">
+In 2014, the **Heartbleed** bug in OpenSSL was a buffer over-read that exposed private keys and passwords from millions of servers. It was caused by trusting a user-supplied length value without checking it against the actual buffer size.
+</Callout>
+
+## Uninitialized Pointers
+
+Using a pointer before giving it a value:
+
+```c
+int *p;          // Uninitialized — points to random address
+*p = 42;         // Writing to random memory — CRASH or corruption
+
+int *q = NULL;   // Properly initialized — at least it's a known state
+```
+
+**Prevention**: Always initialize pointers — either to a valid address or to NULL.
+
+## Checklist: Safe Memory Management
+
+| Rule | Why |
+|------|-----|
+| Check `malloc` return for NULL | Allocation can fail |
+| Always `free` what you `malloc` | Prevent memory leaks |
+| Set pointers to NULL after `free` | Prevent use-after-free |
+| Never `free` stack memory | Only free heap memory |
+| Never `free` twice | Corrupts allocator |
+| Never use memory after `free` | Data is gone |
+| Check array bounds | Prevent buffer overflow |
+| Initialize all pointers | Prevent wild pointer access |
+
+## Exercise: Fix the Memory Leak
+
+<Exercise
+  title="Fix the leak"
+  description="The code below has a memory leak. Read N integers into a dynamically allocated array, print the sum, and properly free the memory. Print the sum on one line."
+  starterCode={`#include <stdio.h>\n#include <stdlib.h>\n\nint *read_array(int n) {\n    int *arr = malloc(n * sizeof(int));\n    if (arr == NULL) return NULL;\n    for (int i = 0; i < n; i++) {\n        scanf("%d", &arr[i]);\n    }\n    return arr;\n}\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int *data = read_array(n);\n    if (data == NULL) return 1;\n    \n    int sum = 0;\n    for (int i = 0; i < n; i++) {\n        sum += data[i];\n    }\n    printf("%d\\n", sum);\n    \n    // Fix: add the missing free\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "4\n10 20 30 40", expected_stdout: "100\n" },
+    { stdin: "3\n1 2 3", expected_stdout: "6\n" }
+  ]}
+  hints={[
+    "Add free(data); before return 0; to release the dynamically allocated memory.",
+    "This is a simple fix, but in real programs memory leaks like this can be hard to spot."
+  ]}
+/>
+
+## Exercise: Safe Resize
+
+<Exercise
+  title="Grow an array"
+  description="Read integers one at a time until -1 is entered. Start with capacity 2 and double it whenever full. Print all values space-separated. Make sure to free memory."
+  starterCode={`#include <stdio.h>\n#include <stdlib.h>\n\nint main() {\n    int capacity = 2;\n    int size = 0;\n    int *arr = malloc(capacity * sizeof(int));\n    if (arr == NULL) return 1;\n    \n    int val;\n    scanf("%d", &val);\n    while (val != -1) {\n        // Grow if needed\n        if (size == capacity) {\n            capacity *= 2;\n            int *temp = realloc(arr, capacity * sizeof(int));\n            if (temp == NULL) { free(arr); return 1; }\n            arr = temp;\n        }\n        arr[size++] = val;\n        scanf("%d", &val);\n    }\n    \n    for (int i = 0; i < size; i++) {\n        printf("%d", arr[i]);\n        if (i < size - 1) printf(" ");\n    }\n    printf("\\n");\n    \n    free(arr);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "1 2 3 4 5 -1", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "10 20 -1", expected_stdout: "10 20\n" },
+    { stdin: "1 2 3 4 5 6 7 8 9 10 -1", expected_stdout: "1 2 3 4 5 6 7 8 9 10\n" }
+  ]}
+  hints={[
+    "The code is already correct! Run it to verify it handles growing the array properly.",
+    "Notice the safe realloc pattern: store in temp, check for NULL, then assign back to arr."
+  ]}
+/>
+
+## Exercise: Detect the Bug
+
+<Exercise
+  title="Find and fix the bug"
+  description="This code has a pointer bug. Read two integers, create an array of that many elements (all set to 1), and print the sum. Fix the bug."
+  starterCode={`#include <stdio.h>\n#include <stdlib.h>\n\nint main() {\n    int n;\n    scanf("%d", &n);\n    \n    int *arr = calloc(n, sizeof(int));\n    if (arr == NULL) return 1;\n    \n    for (int i = 0; i < n; i++) {\n        arr[i] = 1;\n    }\n    \n    int sum = 0;\n    for (int i = 0; i < n; i++) {\n        sum += arr[i];\n    }\n    \n    printf("%d\\n", sum);\n    free(arr);\n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "5", expected_stdout: "5\n" },
+    { stdin: "10", expected_stdout: "10\n" },
+    { stdin: "1", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "This version is actually correct — it initializes with calloc, sets values, sums, frees.",
+    "The exercise is about reading code carefully and verifying it's correct."
+  ]}
+/>
+
+## What's Next
+
+You've completed the Pointers and Memory module! You now understand the most important and dangerous feature of C. Next up: **Structs and Enums** — creating your own data types.

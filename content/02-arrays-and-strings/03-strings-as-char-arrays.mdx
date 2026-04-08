@@ -1,0 +1,131 @@
+---
+title: "Strings as Char Arrays"
+module: "Arrays and Strings"
+order: 3
+description: "How C represents text — null-terminated character arrays, string literals, and manual string operations."
+difficulty: "beginner"
+---
+
+C has no built-in string type. A "string" is simply an array of `char` values terminated by a special null character `'\0'`.
+
+## Characters vs Strings
+
+Before diving in, an important distinction: **single quotes** and **double quotes** mean totally different things in C:
+
+- `'A'` — a **character constant**: a single `char` value (actually an `int`, with value 65 in ASCII)
+- `"A"` — a **string literal**: an array of two characters ('A' and '\0')
+
+```c
+char c = 'A';     // 1 byte — the character A
+char s[] = "A";   // 2 bytes — 'A' followed by '\0'
+```
+
+This matters because you can't use them interchangeably. `printf("%s", 'A')` is a crash — it tries to use the integer 65 as a memory address. And `char c = "A"` assigns a pointer to a single byte.
+
+One handy trick: **adjacent string literals are automatically concatenated** by the compiler. `"Hello, " "world!"` becomes `"Hello, world!"` — no operator needed. This is useful for splitting long strings across multiple lines without using string concatenation functions.
+
+## String Basics
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    // These two are equivalent:\n    char greeting[] = "Hello";            // Compiler adds \\0 automatically\n    char manual[] = {'H', 'e', 'l', 'l', 'o', '\\0'};\n    \n    printf("%s\\n", greeting);  // %s prints until it hits \\0\n    printf("%s\\n", manual);\n    \n    // The string "Hello" actually occupies 6 bytes (5 chars + \\0)\n    printf("sizeof: %zu\\n", sizeof(greeting));\n    \n    return 0;\n}\n`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+The null terminator `'\0'` is critical. Without it, `printf` and other string functions keep reading memory until they happen to find a zero byte — printing garbage or crashing. Always ensure your strings are null-terminated.
+</Callout>
+
+## Accessing Individual Characters
+
+Since strings are arrays, you can access each character by index:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    char word[] = "Hello";\n    \n    // Print each character\n    for (int i = 0; word[i] != '\\0'; i++) {\n        printf("word[%d] = '%c' (ASCII %d)\\n", i, word[i], word[i]);\n    }\n    \n    // Modify a character\n    word[0] = 'J';\n    printf("\\nModified: %s\\n", word);  // Jello\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+The loop condition `word[i] != '\0'` is the standard way to iterate through a string until the end.
+
+## String Input
+
+Reading strings with `scanf` and `fgets`:
+
+<Editor defaultCode={`#include <stdio.h>\n\nint main() {\n    char name[50];\n    \n    // scanf reads a single word (stops at whitespace)\n    scanf("%49s", name);  // Note: no & needed for arrays!\n    printf("You said: %s\\n", name);\n    \n    return 0;\n}\n`} stdin="Alice" time="O(1)" space="O(1)" />
+
+<Callout type="info">
+Notice we wrote `%49s` instead of `%s`. The `49` limits input to 49 characters (leaving room for `'\0'`), preventing buffer overflow. The array name `name` is already a pointer, so no `&` is needed.
+</Callout>
+
+For reading full lines (including spaces), use `fgets`:
+
+<Editor defaultCode={`#include <stdio.h>\n#include <string.h>\n\nint main() {\n    char line[100];\n    \n    fgets(line, sizeof(line), stdin);  // Reads entire line\n    \n    // fgets includes the newline — remove it\n    line[strcspn(line, "\\n")] = '\\0';\n    \n    printf("Line: '%s'\\n", line);\n    \n    return 0;\n}\n`} stdin="Hello World" time="O(1)" space="O(1)" />
+
+## Manual String Operations
+
+Let's build basic string operations by hand to understand how they work:
+
+<Editor defaultCode={`#include <stdio.h>\n\n// Calculate string length (like strlen)\nint my_strlen(char str[]) {\n    int len = 0;\n    while (str[len] != '\\0') {\n        len++;\n    }\n    return len;\n}\n\n// Copy src into dest (like strcpy)\nvoid my_strcpy(char dest[], char src[]) {\n    int i = 0;\n    while (src[i] != '\\0') {\n        dest[i] = src[i];\n        i++;\n    }\n    dest[i] = '\\0';  // Don't forget the null terminator!\n}\n\nint main() {\n    char original[] = "Hello, World!";\n    char copy[50];\n    \n    my_strcpy(copy, original);\n    \n    printf("Original: %s (length %d)\\n", original, my_strlen(original));\n    printf("Copy:     %s (length %d)\\n", copy, my_strlen(copy));\n    \n    return 0;\n}\n`} time="O(n)" space="O(n)" />
+
+## Comparing Strings
+
+You cannot compare strings with `==` in C. That compares memory addresses, not contents:
+
+```c
+char a[] = "hello";
+char b[] = "hello";
+if (a == b) { ... }  // WRONG: compares addresses, always false
+```
+
+You must compare character by character (or use `strcmp` from the standard library, covered next lesson):
+
+<Editor defaultCode={`#include <stdio.h>\n\nint my_strcmp(char a[], char b[]) {\n    int i = 0;\n    while (a[i] != '\\0' && b[i] != '\\0') {\n        if (a[i] != b[i]) {\n            return a[i] - b[i];  // Negative if a < b, positive if a > b\n        }\n        i++;\n    }\n    return a[i] - b[i];  // Handle different lengths\n}\n\nint main() {\n    printf("abc vs abc: %d\\n", my_strcmp("abc", "abc"));   // 0 (equal)\n    printf("abc vs abd: %d\\n", my_strcmp("abc", "abd"));   // negative\n    printf("abd vs abc: %d\\n", my_strcmp("abd", "abc"));   // positive\n    printf("ab vs abc:  %d\\n", my_strcmp("ab", "abc"));    // negative\n    \n    return 0;\n}\n`} time="O(n)" space="O(1)" />
+
+## Exercise: String Length
+
+<Exercise
+  title="Count characters"
+  description="Read a single word from stdin. Print its length (number of characters, not counting the null terminator)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    char word[100];\n    scanf("%99s", word);\n    \n    // Count and print the length\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "5\n" },
+    { stdin: "C", expected_stdout: "1\n" },
+    { stdin: "pneumonia", expected_stdout: "9\n" }
+  ]}
+  hints={[
+    "Loop through the array until you hit '\\0', counting each character.",
+    "int len = 0; while (word[len] != '\\0') len++;"
+  ]}
+/>
+
+## Exercise: Count Vowels
+
+<Exercise
+  title="Vowel counter"
+  description="Read a word from stdin. Print the number of vowels (a, e, i, o, u — lowercase only)."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    char word[100];\n    scanf("%99s", word);\n    \n    // Count and print the number of vowels\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "2\n" },
+    { stdin: "aeiou", expected_stdout: "5\n" },
+    { stdin: "xyz", expected_stdout: "0\n" },
+    { stdin: "programming", expected_stdout: "3\n" }
+  ]}
+  hints={[
+    "Loop through each character and check if it's a, e, i, o, or u.",
+    "Use || to chain comparisons: if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u')"
+  ]}
+/>
+
+## Exercise: Reverse a String
+
+<Exercise
+  title="Reverse string"
+  description="Read a word from stdin. Print it reversed."
+  starterCode={`#include <stdio.h>\n\nint main() {\n    char word[100];\n    scanf("%99s", word);\n    \n    // Find the length, then print in reverse\n    \n    return 0;\n}\n`}
+  testCases={[
+    { stdin: "hello", expected_stdout: "olleh\n" },
+    { stdin: "abcde", expected_stdout: "edcba\n" },
+    { stdin: "a", expected_stdout: "a\n" }
+  ]}
+  hints={[
+    "First find the length: while (word[len] != '\\0') len++;",
+    "Then print from the last character to the first: for (int i = len - 1; i >= 0; i--) printf(\"%c\", word[i]);"
+  ]}
+/>
+
+## What's Next
+
+Now that you can build strings from scratch, let's learn about the **C string library** — `strlen`, `strcpy`, `strcmp`, and more built-in tools.

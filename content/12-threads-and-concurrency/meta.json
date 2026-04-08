@@ -1,0 +1,6 @@
+{
+  "title": "Threads & Concurrency",
+  "order": 12,
+  "phase": 4,
+  "description": "POSIX threads, synchronization primitives, and concurrent programming patterns."
+}

@@ -1,0 +1,6 @@
+{
+  "title": "IPC & Sockets",
+  "order": 13,
+  "phase": 4,
+  "description": "Inter-process communication, shared memory, and network programming with sockets."
+}

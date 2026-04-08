@@ -1,0 +1,299 @@
+---
+title: "Quicksort"
+module: "Sorting & Searching"
+order: 4
+description: "Partition-based divide-and-conquer — the fastest comparison sort in practice."
+difficulty: "intermediate"
+---
+
+Quicksort is typically the fastest comparison-based sorting algorithm in practice. It works by choosing a **pivot** element and partitioning the array around it.
+
+## The Idea
+
+1. **Pick a pivot** element
+2. **Partition**: move all elements smaller than pivot to the left, larger to the right
+3. **Recurse** on the left and right partitions
+
+<Editor defaultCode={`#include <stdio.h>
+
+void swap(int *a, int *b) {
+    int temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+// Lomuto partition: pivot is last element
+int partition(int arr[], int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;  // index of smaller element
+
+    for (int j = low; j < high; j++) {
+        if (arr[j] <= pivot) {
+            i++;
+            swap(&arr[i], &arr[j]);
+        }
+    }
+    swap(&arr[i + 1], &arr[high]);
+    return i + 1;  // pivot's final position
+}
+
+void quicksort(int arr[], int low, int high) {
+    if (low < high) {
+        int pi = partition(arr, low, high);
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    }
+}
+
+int main() {
+    int arr[] = {10, 7, 8, 9, 1, 5};
+    int n = 6;
+
+    quicksort(arr, 0, n - 1);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n log n) average" space="O(log n) stack" />
+
+<Complexity time="O(n log n) average, O(n²) worst" space="O(log n)" />
+
+## How Partition Works
+
+Let's trace through partitioning `[10, 7, 8, 9, 1, 5]` with pivot = 5:
+
+```
+i = -1, pivot = 5
+
+j=0: arr[0]=10 > 5, skip
+j=1: arr[1]=7 > 5, skip
+j=2: arr[2]=8 > 5, skip
+j=3: arr[3]=9 > 5, skip
+j=4: arr[4]=1 <= 5, i=0, swap arr[0] and arr[4] → [1, 7, 8, 9, 10, 5]
+
+Place pivot: swap arr[1] and arr[5] → [1, 5, 8, 9, 10, 7]
+Pivot index: 1
+```
+
+Everything left of index 1 is ≤ 5, everything right is > 5.
+
+## Hoare's Partition
+
+An alternative partitioning scheme that's often faster (fewer swaps on average):
+
+<Editor defaultCode={`#include <stdio.h>
+
+void swap(int *a, int *b) {
+    int t = *a; *a = *b; *b = t;
+}
+
+int hoare_partition(int arr[], int low, int high) {
+    int pivot = arr[low];
+    int i = low - 1;
+    int j = high + 1;
+
+    while (1) {
+        do { i++; } while (arr[i] < pivot);
+        do { j--; } while (arr[j] > pivot);
+        if (i >= j) return j;
+        swap(&arr[i], &arr[j]);
+    }
+}
+
+void quicksort(int arr[], int low, int high) {
+    if (low < high) {
+        int p = hoare_partition(arr, low, high);
+        quicksort(arr, low, p);       // note: include p
+        quicksort(arr, p + 1, high);
+    }
+}
+
+int main() {
+    int arr[] = {10, 7, 8, 9, 1, 5};
+    int n = 6;
+
+    quicksort(arr, 0, n - 1);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n log n) average" space="O(log n)" />
+
+## Worst Case
+
+<Callout type="warning">
+Quicksort degrades to **O(n²)** when the pivot is always the smallest or largest element. This happens with sorted input and last-element pivoting. Mitigations:
+- **Median-of-three**: pick the median of first, middle, last
+- **Random pivot**: choose a random element
+- **Introsort**: switch to heapsort if recursion depth exceeds O(log n)
+</Callout>
+
+## Quicksort vs Merge Sort
+
+| | Quicksort | Merge Sort |
+|---|-----------|------------|
+| Average | O(n log n) | O(n log n) |
+| Worst | O(n²) | O(n log n) |
+| Space | O(log n) | O(n) |
+| Stable | No | Yes |
+| Cache | Excellent | Good |
+| Practice | Usually fastest | Guaranteed performance |
+
+## Exercise: Implement Quicksort
+
+<Exercise
+  title="Quicksort"
+  description="Read N, then N integers. Sort using quicksort (Lomuto partition with last element as pivot). Print sorted."
+  starterCode={`#include <stdio.h>
+
+void swap(int *a, int *b) {
+    int t = *a; *a = *b; *b = t;
+}
+
+int partition(int arr[], int low, int high) {
+    // TODO: Lomuto partition
+    return low;
+}
+
+void quicksort(int arr[], int low, int high) {
+    // TODO
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    quicksort(arr, 0, n - 1);
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n10 7 8 9 1 5", expected_stdout: "1 5 7 8 9 10\n" },
+    { stdin: "5\n5 4 3 2 1", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "Partition: use arr[high] as pivot. Walk j from low to high-1.",
+    "If arr[j] <= pivot, increment i and swap arr[i] with arr[j].",
+    "After the loop, swap arr[i+1] with arr[high] (put pivot in place).",
+    "Return i+1 as the pivot index."
+  ]}
+/>
+
+## Exercise: K-th Smallest (Quickselect)
+
+<Exercise
+  title="K-th smallest element"
+  description="Read N, then N integers, then K (1-indexed). Find the K-th smallest element. Hint: use partition like quicksort but only recurse into the relevant half."
+  starterCode={`#include <stdio.h>
+
+void swap(int *a, int *b) {
+    int t = *a; *a = *b; *b = t;
+}
+
+int partition(int arr[], int low, int high) {
+    int pivot = arr[high];
+    int i = low - 1;
+    for (int j = low; j < high; j++) {
+        if (arr[j] <= pivot) {
+            i++;
+            swap(&arr[i], &arr[j]);
+        }
+    }
+    swap(&arr[i + 1], &arr[high]);
+    return i + 1;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int k;
+    scanf("%d", &k);
+
+    // Use quickselect to find k-th smallest (1-indexed)
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n10 4 5 8 6 11 26\n3", expected_stdout: "6\n" },
+    { stdin: "5\n1 2 3 4 5\n1", expected_stdout: "1\n" },
+    { stdin: "5\n5 4 3 2 1\n5", expected_stdout: "5\n" }
+  ]}
+  hints={[
+    "After partition, if pivot index == k-1, we found our answer.",
+    "If pivot index > k-1, recurse on the left half only.",
+    "If pivot index < k-1, recurse on the right half only.",
+    "This runs in O(n) average time — much faster than sorting!"
+  ]}
+/>
+
+## Exercise: Dutch National Flag
+
+<Exercise
+  title="Three-way partition"
+  description="Read N, then N integers that are only 0, 1, or 2. Sort them in one pass (don't use a general sort). Print the result."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Dutch National Flag: sort 0s, 1s, 2s in one pass
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "8\n2 0 1 2 1 0 0 2", expected_stdout: "0 0 0 1 1 2 2 2\n" },
+    { stdin: "5\n0 0 0 0 0", expected_stdout: "0 0 0 0 0\n" },
+    { stdin: "6\n2 1 0 2 1 0", expected_stdout: "0 0 1 1 2 2\n" }
+  ]}
+  hints={[
+    "Use three pointers: low (boundary of 0s), mid (current), high (boundary of 2s).",
+    "If arr[mid] == 0, swap with low, advance both.",
+    "If arr[mid] == 1, just advance mid.",
+    "If arr[mid] == 2, swap with high, decrement high (don't advance mid — need to check swapped value)."
+  ]}
+/>
+
+## What's Next
+
+Our final topic in this module: **hash tables** — achieving O(1) average lookups.

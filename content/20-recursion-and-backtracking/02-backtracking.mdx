@@ -1,0 +1,384 @@
+---
+title: "Backtracking"
+module: "Recursion & Backtracking"
+order: 2
+description: "Systematically explore all possibilities with pruning to solve constraint satisfaction problems."
+difficulty: "intermediate"
+---
+
+In the last lesson, you saw `swap → recurse → un-swap` in the permutation code.
+That **undo step** is the core of backtracking. Now we formalize it into a technique
+that solves problems where you must search through a massive space of possibilities.
+
+## What Backtracking Really Is
+
+Imagine exploring a maze. At each fork, you pick a path. If you hit a dead end, you
+walk back to the last fork and try the next path. You don't restart from the
+beginning — you just undo your last choice and try something different.
+
+That's backtracking: **depth-first search on a decision tree, with pruning.**
+
+The decision tree has a node for every partial solution. Each edge represents a
+choice. Leaves are either valid solutions or dead ends. Backtracking explores this
+tree, but **prunes** (skips) entire subtrees as soon as it can prove they contain
+no valid solutions.
+
+Without pruning, you'd enumerate every possible candidate — brute force. Pruning is
+what makes backtracking practical.
+
+## The Template
+
+Every backtracking algorithm follows this shape:
+
+```
+function backtrack(state):
+    if state is a complete solution:
+        record/print it
+        return
+
+    for each choice available from state:
+        if choice MIGHT lead to a valid solution:   ← pruning
+            make the choice
+            backtrack(updated state)
+            undo the choice                         ← backtrack step
+```
+
+The three ingredients:
+1. **Choose** — pick an option.
+2. **Explore** — recurse with that choice made.
+3. **Un-choose** — undo it so the next iteration can try a different option.
+
+The "if choice might lead to a valid solution" check is the pruning. The better your
+pruning, the fewer branches you explore.
+
+## N-Queens: The Classic
+
+**Problem:** Place N queens on an N×N chessboard so that no two queens attack each
+other (no shared row, column, or diagonal).
+
+### Building the Solution
+
+We place queens **one row at a time** (since each row must have exactly one queen).
+For each row, we try each column. If placing a queen at (row, col) doesn't conflict
+with any queen already placed, we move to the next row. If we fill all rows, we have
+a solution. If no column works for the current row, we **backtrack** — return to the
+previous row and try its next column.
+
+### Why `is_safe` Works
+
+A queen at (r, c) attacks:
+- Same row: all (r, *) — but we place one queen per row, so no check needed.
+- Same column: all (*, c) — check all rows above.
+- Diagonals: if two queens are at (r1, c1) and (r2, c2), they share a diagonal
+  when |r1 - r2| = |c1 - c2|. We check both diagonals upward.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+#define MAX_N 12
+
+int board[MAX_N][MAX_N];
+int solutions = 0;
+long long checks = 0;
+
+void print_board(int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++)
+            printf("%c ", board[i][j] ? 'Q' : '.');
+        printf("\\n");
+    }
+    printf("\\n");
+}
+
+int is_safe(int row, int col, int n) {
+    checks++;
+    // Check column above
+    for (int i = 0; i < row; i++)
+        if (board[i][col]) return 0;
+
+    // Check upper-left diagonal
+    for (int i = row-1, j = col-1; i >= 0 && j >= 0; i--, j--)
+        if (board[i][j]) return 0;
+
+    // Check upper-right diagonal
+    for (int i = row-1, j = col+1; i >= 0 && j < n; i--, j++)
+        if (board[i][j]) return 0;
+
+    return 1;
+}
+
+void solve(int row, int n, int print_all) {
+    if (row == n) {
+        solutions++;
+        if (print_all && n <= 6) print_board(n);
+        return;
+    }
+
+    for (int col = 0; col < n; col++) {    // Try each column
+        if (is_safe(row, col, n)) {        // Prune: skip unsafe columns
+            board[row][col] = 1;           // CHOOSE: place queen
+            solve(row + 1, n, print_all);  // EXPLORE: next row
+            board[row][col] = 0;           // UN-CHOOSE: remove queen
+        }
+    }
+}
+
+int main() {
+    int n = 5;
+    printf("=== %d-Queens Solutions ===\\n\\n", n);
+    solve(0, n, 1);
+    printf("Total solutions for %d-Queens: %d\\n\\n", n, solutions);
+
+    // Watch how pruning tames the search space
+    printf("Board  Solutions  Safety checks  Brute force would try\\n");
+    for (int size = 4; size <= 10; size++) {
+        solutions = 0;
+        checks = 0;
+        solve(0, size, 0);
+        // Without pruning, we'd try size^size placements
+        long long brute = 1;
+        for (int i = 0; i < size; i++) brute *= size;
+        printf("%2d     %5d      %10lld      %lld\\n",
+               size, solutions, checks, brute);
+    }
+
+    return 0;
+}
+`} time="O(n!)" space="O(n²)" />
+
+<Callout type="info">
+Look at the "safety checks" vs "brute force" columns. For 10-Queens, brute force would
+examine 10 billion placements. Backtracking with pruning checks only a tiny fraction —
+that's the power of cutting off dead-end branches early.
+</Callout>
+
+### The Pruning Effect
+
+For row 0, we try all n columns (n choices). For row 1, many columns are already
+attacked, so `is_safe` returns false and we skip them. By row 5 or 6, most columns
+are eliminated. The actual work is closer to n! than nⁿ because pruning rapidly
+reduces the branching factor.
+
+## Sudoku: Constraint Propagation Meets Backtracking
+
+Sudoku is the poster child for backtracking: find an empty cell, try digits 1-9, check
+constraints, recurse.
+
+But notice how the pruning works: `is_valid` checks three constraints per digit
+(row, column, 3×3 box). A digit that violates any constraint is immediately eliminated.
+Typically, most of the 9 options are pruned for each cell, leaving very few to explore.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int grid[9][9] = {
+    {5,3,0, 0,7,0, 0,0,0},
+    {6,0,0, 1,9,5, 0,0,0},
+    {0,9,8, 0,0,0, 0,6,0},
+
+    {8,0,0, 0,6,0, 0,0,3},
+    {4,0,0, 8,0,3, 0,0,1},
+    {7,0,0, 0,2,0, 0,0,6},
+
+    {0,6,0, 0,0,0, 2,8,0},
+    {0,0,0, 4,1,9, 0,0,5},
+    {0,0,0, 0,8,0, 0,7,9}
+};
+
+int attempts = 0;
+
+int is_valid(int row, int col, int num) {
+    // Check row: does 'num' already appear in this row?
+    for (int j = 0; j < 9; j++)
+        if (grid[row][j] == num) return 0;
+
+    // Check column: does 'num' already appear in this column?
+    for (int i = 0; i < 9; i++)
+        if (grid[i][col] == num) return 0;
+
+    // Check 3x3 box: does 'num' already appear in its box?
+    int box_r = (row / 3) * 3, box_c = (col / 3) * 3;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            if (grid[box_r + i][box_c + j] == num) return 0;
+
+    return 1;
+}
+
+int solve() {
+    // Find the first empty cell
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j < 9; j++) {
+            if (grid[i][j] == 0) {
+                // Try each digit
+                for (int num = 1; num <= 9; num++) {
+                    attempts++;
+                    if (is_valid(i, j, num)) {
+                        grid[i][j] = num;       // CHOOSE
+                        if (solve()) return 1;  // EXPLORE
+                        grid[i][j] = 0;         // UN-CHOOSE (backtrack)
+                    }
+                }
+                // No digit works here — this branch is a dead end
+                return 0;
+            }
+        }
+    }
+    // No empty cell found — puzzle is complete
+    return 1;
+}
+
+void print_grid() {
+    for (int i = 0; i < 9; i++) {
+        if (i % 3 == 0 && i > 0) printf("------+-------+------\\n");
+        for (int j = 0; j < 9; j++) {
+            if (j % 3 == 0 && j > 0) printf("| ");
+            printf("%d ", grid[i][j]);
+        }
+        printf("\\n");
+    }
+}
+
+int main() {
+    printf("Puzzle:\\n");
+    print_grid();
+
+    if (solve()) {
+        printf("\\nSolved in %d attempts:\\n", attempts);
+        print_grid();
+    } else {
+        printf("\\nNo solution exists.\\n");
+    }
+    return 0;
+}
+`} time="O(9^m)" space="O(m)" />
+
+<Callout type="warning">
+**m** is the number of empty cells. In theory, 9ᵐ is enormous. But the three
+constraints (row, column, box) typically allow only 1-3 valid digits per cell,
+pruning the tree drastically. Real Sudoku puzzles solve in milliseconds despite the
+exponential worst case.
+</Callout>
+
+### The Key Return Pattern
+
+Look at this code carefully:
+
+```c
+grid[i][j] = num;          // Try this digit
+if (solve()) return 1;     // If it leads to a solution, propagate success
+grid[i][j] = 0;            // Otherwise, undo and try next digit
+```
+
+When `solve()` returns `true`, we don't undo — the solution stays. When it returns
+`false`, we undo and try the next option. And if ALL options fail (`return 0` at the
+bottom), we propagate the failure upward, causing the *caller* to undo *its* choice and
+try something else. This cascading undo is what makes backtracking powerful.
+
+## Backtracking = DFS + Pruning
+
+If you're familiar with graph traversal, backtracking is just **depth-first search
+on an implicit graph** (the decision tree).
+
+Without pruning (the `is_safe`/`is_valid` checks), you'd explore every node in the
+tree — that's exhaustive brute force. The pruning cuts off entire subtrees. The
+quality of your pruning function determines whether your algorithm runs in
+milliseconds or years.
+
+Good pruning strategies:
+- **Check constraints immediately** — don't wait until the solution is complete to
+  discover it's invalid.
+- **Prune early** — the higher up in the tree you prune, the more branches you skip.
+- **Choose the most constrained variable first** — in Sudoku, filling the cell with
+  the fewest valid options first reduces branching.
+
+## Exercise: Generate Parentheses
+
+<Exercise
+  title="Valid parentheses combinations"
+  description="Generate all combinations of n pairs of well-formed parentheses. Print each combination on a new line in lexicographic order. Read n."
+  starterCode={`#include <stdio.h>
+
+void generate(char result[], int pos, int open, int close, int n) {
+    if (pos == 2 * n) {
+        result[pos] = '\\0';
+        printf("%s\\n", result);
+        return;
+    }
+
+    // Two choices at each position: '(' or ')'
+    // But not all choices are valid — here's the pruning:
+
+    // Can we place '('?  Only if we haven't used all n opens.
+    // Can we place ')'?  Only if close < open (more opens than closes so far).
+    // Placing ')' when close >= open would create ")(" — invalid.
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    char result[20];
+    generate(result, 0, 0, 0, n);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1", expected_stdout: "()\n" },
+    { stdin: "2", expected_stdout: "(())\n()()\n" },
+    { stdin: "3", expected_stdout: "((()))\n(()())\n(())()\n()(())\n()()()\n" }
+  ]}
+  hints={[
+    "If open < n: place '(' at result[pos], recurse with open+1. This is the CHOOSE-EXPLORE step.",
+    "If close < open: place ')' at result[pos], recurse with close+1.",
+    "No explicit UN-CHOOSE is needed because result[pos] gets overwritten by the next call. But the backtracking structure is there — if '(' doesn't lead to a full solution, we try ')' at the same position."
+  ]}
+/>
+
+## Exercise: Subset Sum
+
+<Exercise
+  title="Find subsets with target sum"
+  description="Given a set of positive integers and a target sum, count how many subsets sum to exactly the target. Read n and target, then n positive integers."
+  starterCode={`#include <stdio.h>
+
+int count = 0;
+
+void find_subsets(int arr[], int n, int index, int current_sum, int target) {
+    if (current_sum == target) {
+        count++;
+        // Don't return here — there might be elements left to consider
+    }
+    if (index == n || current_sum > target) {
+        return;  // PRUNE: exceeded target (since all elements are positive)
+    }
+
+    // Include arr[index] — CHOOSE
+    // Recurse — EXPLORE
+    // The UN-CHOOSE happens implicitly: current_sum isn't modified, it's passed by value
+
+    // Exclude arr[index]
+    // Recurse
+}
+
+int main() {
+    int n, target;
+    scanf("%d %d", &n, &target);
+
+    int arr[20];
+    for (int i = 0; i < n; i++) scanf("%d", &arr[i]);
+
+    find_subsets(arr, n, 0, 0, target);
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4 5\n1 2 3 4", expected_stdout: "2\n" },
+    { stdin: "5 10\n2 3 5 6 8", expected_stdout: "3\n" },
+    { stdin: "3 7\n1 2 3", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "Include: find_subsets(arr, n, index+1, current_sum + arr[index], target).",
+    "Exclude: find_subsets(arr, n, index+1, current_sum, target).",
+    "The pruning (current_sum > target) avoids exploring branches that are already too large. Without it, you'd still get correct answers, but slower."
+  ]}
+/>

@@ -1,0 +1,374 @@
+---
+title: "Bitwise Operators"
+module: "Bitwise & Low-Level"
+order: 2
+description: "AND, OR, XOR, NOT, and shift operators — working with individual bits."
+difficulty: "intermediate"
+---
+
+C gives you six operators that reach *inside* an integer and manipulate individual bits. Each one has a clear mental model, and once you internalize those models, bit manipulation stops being mysterious.
+
+## The Operators at a Glance
+
+| Operator | Name | Mental Model | Example | Result |
+|----------|------|--------------|---------|--------|
+| `&` | AND | **Masking** — keep only the bits I care about | `5 & 3` | `1` |
+| `\|` | OR | **Setting** — force certain bits on | `5 \| 3` | `7` |
+| `^` | XOR | **Toggling** — flip specific bits | `5 ^ 3` | `6` |
+| `~` | NOT | **Inverting** — flip every single bit | `~5` | `-6` |
+| `<<` | Left shift | **Multiply by 2** (per shift) | `5 << 1` | `10` |
+| `>>` | Right shift | **Divide by 2** (per shift) | `5 >> 1` | `2` |
+
+Let's build intuition for each one.
+
+## AND (&) — The Mask
+
+Think of AND as a **stencil**. You place a mask over your value, and only the bits where the mask has a 1 survive. Everything else becomes 0.
+
+```
+    1 1 0 0  1 0 1 0     (value: 0xCA)
+  & 0 0 0 0  1 1 1 1     (mask:  0x0F)
+  ─────────────────────
+    0 0 0 0  1 0 1 0     (result: 0x0A — only lower 4 bits survive)
+```
+
+**Why it works**: AND outputs 1 only when *both* inputs are 1. A 0 in the mask forces the output to 0 regardless of the value. A 1 in the mask lets the value's bit pass through unchanged.
+
+**Real-world use**: Extracting specific bits. Network code uses AND to isolate IP address octets. Graphics code uses it to extract color channels. Hardware drivers use it to read individual status flags from a register.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i == 4) printf(" ");
+    }
+}
+
+int main() {
+    unsigned char a = 0xCA;  // 1100 1010
+    unsigned char b = 0x0F;  // 0000 1111 (mask for lower 4 bits)
+
+    printf("a     = "); print_binary8(a); printf(" (0x%02X)\\n", a);
+    printf("b     = "); print_binary8(b); printf(" (0x%02X)\\n", b);
+    printf("a & b = "); print_binary8(a & b); printf(" (0x%02X)\\n", a & b);
+
+    printf("\\nLower nibble of 0xCA: 0x%X\\n", a & 0x0F);
+    printf("Upper nibble of 0xCA: 0x%X\\n", (a & 0xF0) >> 4);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## OR (|) — The Setter
+
+OR is the opposite of masking: it **forces bits on** without disturbing the others. Any position where the "setter" has a 1, the output becomes 1 — regardless of what was there before. Positions where the setter has a 0 leave the original bit untouched.
+
+```
+    0 0 0 0  0 0 0 0     (flags: nothing set)
+  | 0 0 0 0  0 1 0 1     (setter: bits 0 and 2)
+  ─────────────────────
+    0 0 0 0  0 1 0 1     (result: bits 0 and 2 are now ON)
+```
+
+**Why it works**: OR outputs 1 when *either* (or both) inputs are 1. A 1 in the setter guarantees a 1 in the output. A 0 in the setter lets the original bit pass through.
+
+**Real-world use**: Combining flags. Unix file permissions, TCP socket options, window style flags — all use OR to compose multiple options into a single value. The pattern `flags |= NEW_FLAG` is one of the most common idioms in C.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i == 4) printf(" ");
+    }
+}
+
+int main() {
+    unsigned char flags = 0x00;
+
+    // Set bit 0 (0x01), bit 2 (0x04), bit 7 (0x80)
+    flags |= 0x01;  // Set bit 0
+    printf("After setting bit 0: "); print_binary8(flags); printf("\\n");
+
+    flags |= 0x04;  // Set bit 2
+    printf("After setting bit 2: "); print_binary8(flags); printf("\\n");
+
+    flags |= 0x80;  // Set bit 7
+    printf("After setting bit 7: "); print_binary8(flags); printf("\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## XOR (^) — The Toggle
+
+XOR is the most interesting operator. It **flips bits selectively**: wherever the "toggle mask" has a 1, the corresponding bit in the value gets inverted. Where the mask has a 0, the bit stays the same.
+
+```
+    1 1 0 1  0 1 0 0     (value)
+  ^ 0 0 0 0  1 1 1 1     (toggle mask: flip the lower 4 bits)
+  ─────────────────────
+    1 1 0 1  1 0 1 1     (lower 4 bits are inverted, upper unchanged)
+```
+
+**Why it works**: XOR outputs 1 when the inputs *differ*. So XOR with 1 always flips a bit (0→1, 1→0), and XOR with 0 always preserves it (0→0, 1→1).
+
+XOR has a crucial property that makes it special among the bitwise operators: **it's its own inverse**. If you XOR something twice with the same value, you get back the original. This is because flipping a bit twice returns it to its starting state. This property is the basis for XOR swap, simple encryption, error detection, and the "find the unique element" trick.
+
+```
+a ^ b ^ b  =  a       (XOR is self-canceling)
+a ^ a      =  0       (anything XOR itself is zero)
+a ^ 0      =  a       (anything XOR zero is itself)
+```
+
+**Real-world use**: Toggling LED states in embedded systems, checksums (TCP/IP uses XOR), simple data scrambling, swapping without a temp variable, and finding unpaired elements in arrays.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // XOR swap: swap two values without a temp variable
+    int a = 42, b = 17;
+    printf("Before: a=%d, b=%d\\n", a, b);
+
+    a ^= b;  // a = a ^ b
+    b ^= a;  // b = b ^ (a ^ b) = a
+    a ^= b;  // a = (a ^ b) ^ a = b
+
+    printf("After:  a=%d, b=%d\\n", a, b);
+
+    // XOR to find the unique element
+    int arr[] = {3, 7, 3, 5, 7};
+    int result = 0;
+    for (int i = 0; i < 5; i++) {
+        result ^= arr[i];
+    }
+    printf("\\nUnique element: %d\\n", result);
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+## NOT (~) — The Inverter
+
+NOT is the simplest: it flips every single bit. Every 0 becomes 1, every 1 becomes 0. No mask, no selectivity — everything gets inverted.
+
+```
+  ~ 0000 0101  (5)
+  = 1111 1010  (-6 in two's complement)
+```
+
+Why does `~5` equal `-6` and not `-5`? Remember two's complement: `-x = ~x + 1`. So `~x = -(x+1)`. Flipping all bits of 5 gives you the value that's *one less* than -5, which is -6.
+
+**Real-world use**: NOT is rarely used alone. Its main role is building "clear" masks. To clear bit 3, you write `x & ~(1 << 3)`. The `~` flips the single-bit mask `00001000` into `11110111`, which AND then uses to zero out just that one bit while preserving all others.
+
+## Shift Operators — Multiply and Divide by Powers of 2
+
+**Left shift** (`<<`) moves all bits toward the more significant positions, filling the vacated low bits with 0. Each left shift by 1 doubles the value — exactly like appending a 0 in decimal multiplies by 10.
+
+**Right shift** (`>>`) moves all bits toward the less significant positions. For unsigned types, the vacated high bits fill with 0. Each right shift by 1 halves the value (discarding the remainder).
+
+```
+    0000 0101  (5)
+    << 1
+    0000 1010  (10 — doubled!)
+
+    0010 1000  (40)
+    >> 2
+    0000 1010  (10 — divided by 4!)
+```
+
+Why is this useful? Shifts are the **fastest arithmetic operations** a CPU has — even faster than multiplication. Compilers already optimize `x * 2` to `x << 1` for you, but in bit-manipulation code you'll use shifts directly to construct masks, extract bit fields, and pack data.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i == 4) printf(" ");
+    }
+}
+
+int main() {
+    unsigned char x = 5;  // 0000 0101
+
+    printf("x      = "); print_binary8(x); printf(" (%d)\\n", x);
+    printf("x << 1 = "); print_binary8(x << 1); printf(" (%d)\\n", x << 1);
+    printf("x << 2 = "); print_binary8(x << 2); printf(" (%d)\\n", x << 2);
+    printf("x << 3 = "); print_binary8(x << 3); printf(" (%d)\\n", x << 3);
+
+    printf("\\n");
+    unsigned char y = 40;  // 0010 1000
+    printf("y      = "); print_binary8(y); printf(" (%d)\\n", y);
+    printf("y >> 1 = "); print_binary8(y >> 1); printf(" (%d)\\n", y >> 1);
+    printf("y >> 2 = "); print_binary8(y >> 2); printf(" (%d)\\n", y >> 2);
+    printf("y >> 3 = "); print_binary8(y >> 3); printf(" (%d)\\n", y >> 3);
+
+    printf("\\nLeft shift = multiply by 2:\\n");
+    printf("3 << 1 = %d (3 * 2)\\n", 3 << 1);
+    printf("3 << 2 = %d (3 * 4)\\n", 3 << 2);
+    printf("3 << 3 = %d (3 * 8)\\n", 3 << 3);
+
+    printf("\\nRight shift = divide by 2:\\n");
+    printf("24 >> 1 = %d (24 / 2)\\n", 24 >> 1);
+    printf("24 >> 2 = %d (24 / 4)\\n", 24 >> 2);
+    printf("24 >> 3 = %d (24 / 8)\\n", 24 >> 3);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="warning">
+Shifting by a negative number or by more than the bit width is **undefined behavior**. Always ensure `0 <= shift < bit_width`.
+</Callout>
+
+## Putting It Together: Bit Manipulation Recipes
+
+Now that you understand what each operator *means*, here are the four fundamental single-bit operations. Each one combines two operators:
+
+```
+Set bit n:      x | (1 << n)        OR with a 1 at position n
+Clear bit n:    x & ~(1 << n)       AND with a 0 at position n (everything else 1)
+Toggle bit n:   x ^ (1 << n)        XOR with a 1 at position n
+Check bit n:    (x >> n) & 1        Shift bit n to position 0, mask everything else
+```
+
+Think of `1 << n` as a "spotlight" that illuminates a single bit position. Then OR sets it, AND-NOT clears it, XOR toggles it, and shift-AND reads it.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void print_binary8(unsigned char n) {
+    for (int i = 7; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+    }
+}
+
+int main() {
+    unsigned char x = 0b01010101;  // Binary literal (C23/GCC extension)
+    printf("x        = "); print_binary8(x); printf("\\n");
+
+    // Set bit 1
+    x = x | (1 << 1);
+    printf("Set 1    = "); print_binary8(x); printf("\\n");
+
+    // Clear bit 4
+    x = x & ~(1 << 4);
+    printf("Clear 4  = "); print_binary8(x); printf("\\n");
+
+    // Toggle bit 6
+    x = x ^ (1 << 6);
+    printf("Toggle 6 = "); print_binary8(x); printf("\\n");
+
+    // Check bit 2
+    printf("\\nBit 2 is %s\\n", (x >> 2) & 1 ? "set" : "clear");
+    printf("Bit 3 is %s\\n", (x >> 3) & 1 ? "set" : "clear");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Exercise: Bit Counter
+
+<Exercise
+  title="Count set bits"
+  description="Read an unsigned integer N. Print the number of bits that are set to 1 (the population count or Hamming weight)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    unsigned int n;
+    scanf("%u", &n);
+
+    int count = 0;
+    unsigned int temp = n;
+    while (temp > 0) {
+        count += temp & 1;
+        temp >>= 1;
+    }
+
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "0\n" },
+    { stdin: "7", expected_stdout: "3\n" },
+    { stdin: "255", expected_stdout: "8\n" },
+    { stdin: "1023", expected_stdout: "10\n" },
+    { stdin: "1", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "Check the lowest bit with n & 1, then shift right.",
+    "Continue until n becomes 0.",
+    "An alternative: count += n & 1; n >>= 1; in a loop."
+  ]}
+/>
+
+## Exercise: Power of Two Check
+
+<Exercise
+  title="Is it a power of two?"
+  description="Read an unsigned integer N. Print 'yes' if N is a power of two (1, 2, 4, 8, 16, ...), 'no' otherwise. Note: 0 is NOT a power of two."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    unsigned int n;
+    scanf("%u", &n);
+
+    // A power of two has exactly one bit set
+    // n & (n - 1) clears the lowest set bit
+    if (n > 0 && (n & (n - 1)) == 0) {
+        printf("yes\\n");
+    } else {
+        printf("no\\n");
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "1", expected_stdout: "yes\n" },
+    { stdin: "16", expected_stdout: "yes\n" },
+    { stdin: "0", expected_stdout: "no\n" },
+    { stdin: "6", expected_stdout: "no\n" },
+    { stdin: "1024", expected_stdout: "yes\n" }
+  ]}
+  hints={[
+    "A power of two in binary has exactly one 1 bit: 1, 10, 100, 1000, ...",
+    "n & (n-1) removes the lowest set bit. If the result is 0, there was only one bit.",
+    "Don't forget: 0 is not a power of two, so check n > 0."
+  ]}
+/>
+
+## Exercise: Swap Nibbles
+
+<Exercise
+  title="Swap nibbles"
+  description="Read an unsigned 8-bit integer N (0-255). Swap the upper 4 bits with the lower 4 bits and print the result."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    unsigned int n;
+    scanf("%u", &n);
+
+    unsigned int swapped = ((n & 0x0F) << 4) | ((n & 0xF0) >> 4);
+
+    printf("%u\\n", swapped);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "171", expected_stdout: "186\n" },
+    { stdin: "0", expected_stdout: "0\n" },
+    { stdin: "255", expected_stdout: "255\n" },
+    { stdin: "1", expected_stdout: "16\n" }
+  ]}
+  hints={[
+    "Mask lower nibble with & 0x0F, shift left 4.",
+    "Mask upper nibble with & 0xF0, shift right 4.",
+    "OR them together: ((n & 0x0F) << 4) | ((n & 0xF0) >> 4)."
+  ]}
+/>
+
+## What's Next
+
+With the operators mastered, let's explore practical **bit manipulation tricks** used in real-world C programming.

@@ -1,0 +1,6 @@
+{
+  "title": "Pointers and Memory",
+  "order": 3,
+  "phase": 1,
+  "description": "Understanding memory addresses, pointers, dynamic allocation, and common pitfalls."
+}

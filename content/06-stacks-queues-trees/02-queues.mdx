@@ -1,0 +1,436 @@
+---
+title: "Queues"
+module: "Stacks, Queues & Trees"
+order: 2
+description: "First-In-First-Out data structure — enqueue, dequeue, circular buffer, and linked queue."
+difficulty: "intermediate"
+---
+
+A **queue** is a First-In-First-Out (FIFO) data structure. Think of a line at a grocery store — the first person who gets in line is the first person served. No cutting.
+
+This fairness principle shows up everywhere in computing: print jobs wait in a queue (the document you sent first prints first), web servers handle requests in arrival order, operating systems schedule processes with queues, and breadth-first search explores a graph layer by layer using a queue. Whenever you need to process things in the order they arrived, you need a queue.
+
+## Queue Operations
+
+| Operation | Description | Time |
+|-----------|-------------|------|
+| `enqueue(x)` | Add element to the back | O(1) |
+| `dequeue()` | Remove element from the front | O(1) |
+| `peek()` | View front element | O(1) |
+| `isEmpty()` | Check if queue is empty | O(1) |
+
+Like stacks, every operation should be O(1). But achieving this with an array is trickier than you might expect.
+
+## The Naive Approach — And Why It Breaks
+
+The obvious attempt: use an array with a `front` index (where to dequeue from) and a `rear` index (where to enqueue to). Enqueue puts the value at `rear` and advances it. Dequeue reads from `front` and advances it.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define MAX 100
+
+typedef struct {
+    int data[MAX];
+    int front;
+    int rear;
+} Queue;
+
+void init(Queue *q) {
+    q->front = 0;
+    q->rear = 0;
+}
+
+int is_empty(Queue *q) {
+    return q->front == q->rear;
+}
+
+void enqueue(Queue *q, int val) {
+    if (q->rear >= MAX) {
+        printf("Queue full\\n");
+        return;
+    }
+    q->data[q->rear++] = val;
+}
+
+int dequeue(Queue *q) {
+    if (is_empty(q)) {
+        printf("Queue empty\\n");
+        return -1;
+    }
+    return q->data[q->front++];
+}
+
+int main() {
+    Queue q;
+    init(&q);
+
+    enqueue(&q, 10);
+    enqueue(&q, 20);
+    enqueue(&q, 30);
+
+    printf("%d\\n", dequeue(&q));  // 10
+    printf("%d\\n", dequeue(&q));  // 20
+    printf("%d\\n", dequeue(&q));  // 30
+
+    return 0;
+}
+`} time="O(1) per operation" space="O(n)" />
+
+This works for a while. But picture what happens after thousands of enqueue/dequeue cycles:
+
+```
+Before:  [_, _, _, _, X, X, X, _, _, _]
+                      ^front    ^rear
+```
+
+Both `front` and `rear` keep moving right. The slots at the beginning of the array — where old, dequeued values used to live — sit empty and wasted. Eventually `rear` hits `MAX`, and the queue reports "full" even though most of the array is unused.
+
+<Callout type="warning">
+The problem with this naive approach: after many enqueue/dequeue operations, `front` keeps advancing and the space at the beginning of the array is wasted. Eventually the queue appears "full" even though it has room. The fix: **circular buffer**.
+</Callout>
+
+You could shift all elements left when you dequeue, but that's O(n) — far too slow. You could also `realloc` to a bigger array, but that wastes memory. There's a much more elegant solution.
+
+## The Circular Buffer: Why Modular Arithmetic Saves Us
+
+The insight: when `rear` reaches the end of the array, **wrap it around to the beginning.** The array isn't a line — it's a circle.
+
+Imagine the array slots arranged in a ring:
+
+```
+    [0] [1] [2] [3] [4]
+     ↑                ↑
+   front            rear
+
+After enqueue 3 items, dequeue 2:
+    [_] [_] [X] [X] [X]
+             ↑        ↑
+           front     rear is at end...
+
+Enqueue one more — rear wraps to slot 0:
+    [X] [_] [X] [X] [X]
+     ↑       ↑
+    rear   front
+```
+
+The mathematical trick that makes this work: **modular arithmetic.** Instead of `rear++`, you write `rear = (rear + 1) % CAPACITY`. When `rear` is 4 (the last index in a 5-element array), `(4 + 1) % 5 = 0` — it wraps back to the start. The modulo operation turns a linear array into a circular one without any extra data structures.
+
+This is the same math behind a clock: after 12 o'clock comes 1, not 13. `(12 + 1) % 12 = 1`.
+
+But there's a subtle problem: how do you tell "full" from "empty"? In both cases, `front == rear`. The cleanest solution is to keep a separate `size` counter.
+
+<Editor defaultCode={`#include <stdio.h>
+
+#define CAPACITY 5
+
+typedef struct {
+    int data[CAPACITY];
+    int front;
+    int rear;
+    int size;
+} Queue;
+
+void init(Queue *q) {
+    q->front = 0;
+    q->rear = 0;
+    q->size = 0;
+}
+
+int is_empty(Queue *q) { return q->size == 0; }
+int is_full(Queue *q) { return q->size == CAPACITY; }
+
+void enqueue(Queue *q, int val) {
+    if (is_full(q)) {
+        printf("Queue full\\n");
+        return;
+    }
+    q->data[q->rear] = val;
+    q->rear = (q->rear + 1) % CAPACITY;
+    q->size++;
+}
+
+int dequeue(Queue *q) {
+    if (is_empty(q)) {
+        printf("Queue empty\\n");
+        return -1;
+    }
+    int val = q->data[q->front];
+    q->front = (q->front + 1) % CAPACITY;
+    q->size--;
+    return val;
+}
+
+int peek(Queue *q) {
+    return q->data[q->front];
+}
+
+int main() {
+    Queue q;
+    init(&q);
+
+    // Fill the queue
+    for (int i = 1; i <= 5; i++) {
+        enqueue(&q, i * 10);
+    }
+
+    // Dequeue 3, then enqueue 3 more
+    for (int i = 0; i < 3; i++) {
+        printf("Dequeued: %d\\n", dequeue(&q));
+    }
+    enqueue(&q, 60);
+    enqueue(&q, 70);
+    enqueue(&q, 80);
+
+    // Print remaining
+    printf("Queue: ");
+    while (!is_empty(&q)) {
+        printf("%d ", dequeue(&q));
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(1) per operation" space="O(n)" />
+
+Run this and notice: after dequeuing 3 elements and enqueuing 3 more, the queue didn't run out of space — those freed slots at the beginning were reused. Without the circular buffer, this would have failed.
+
+<Callout type="info">
+The `% CAPACITY` wraps the index back to 0 when it reaches the end of the array. This reuses freed slots at the beginning. Circular buffers are used everywhere — audio processing, network packet buffers, kernel I/O rings, and the `dmesg` log on Linux is a circular buffer.
+</Callout>
+
+## Linked Queue
+
+For unlimited growth, use a linked list with head and tail pointers. The front of the queue is the head (dequeue here — O(1) for linked lists). The rear is the tail (enqueue here — O(1) because we keep a tail pointer).
+
+Why do we need *both* head and tail? If we only had a head, enqueuing would require walking the entire list to find the end — O(n). The tail pointer gives us instant access to both ends.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+typedef struct {
+    Node *front;
+    Node *rear;
+    int size;
+} Queue;
+
+void init(Queue *q) {
+    q->front = NULL;
+    q->rear = NULL;
+    q->size = 0;
+}
+
+void enqueue(Queue *q, int val) {
+    Node *n = malloc(sizeof(Node));
+    n->data = val;
+    n->next = NULL;
+
+    if (q->rear == NULL) {
+        q->front = q->rear = n;
+    } else {
+        q->rear->next = n;
+        q->rear = n;
+    }
+    q->size++;
+}
+
+int dequeue(Queue *q) {
+    if (q->front == NULL) {
+        fprintf(stderr, "Queue empty\\n");
+        exit(1);
+    }
+    Node *temp = q->front;
+    int val = temp->data;
+    q->front = temp->next;
+    if (q->front == NULL) {
+        q->rear = NULL;
+    }
+    free(temp);
+    q->size--;
+    return val;
+}
+
+void free_queue(Queue *q) {
+    while (q->front) {
+        Node *t = q->front;
+        q->front = q->front->next;
+        free(t);
+    }
+}
+
+int main() {
+    Queue q;
+    init(&q);
+
+    enqueue(&q, 10);
+    enqueue(&q, 20);
+    enqueue(&q, 30);
+
+    while (q.size > 0) {
+        printf("%d ", dequeue(&q));
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(1) per operation" space="O(n)" />
+
+Watch for the edge case in `dequeue`: when removing the last element, you must set `rear = NULL` too. If you forget, `rear` still points to freed memory — a dangling pointer bug that may not crash immediately but will corrupt data on the next enqueue.
+
+## Stacks vs. Queues: Choosing the Right One
+
+The difference boils down to *which element matters most*:
+
+- **Stack (LIFO)**: the most *recent* item matters → undo, backtracking, DFS, expression evaluation
+- **Queue (FIFO)**: the *oldest* item matters → fairness, scheduling, BFS, buffering
+
+A quick mental test: if you're processing data and something new arrives, should it be handled *before* or *after* everything already waiting? Before → stack. After → queue.
+
+## Exercise: Queue from Input
+
+<Exercise
+  title="Process queue commands"
+  description="Read commands one per line until EOF. 'E X' means enqueue X, 'D' means dequeue and print the value. Process all commands."
+  starterCode={`#include <stdio.h>
+
+#define MAX 1000
+
+typedef struct {
+    int data[MAX];
+    int front, rear, size;
+} Queue;
+
+void init(Queue *q) { q->front = 0; q->rear = 0; q->size = 0; }
+
+void enqueue(Queue *q, int val) {
+    q->data[q->rear] = val;
+    q->rear = (q->rear + 1) % MAX;
+    q->size++;
+}
+
+int dequeue(Queue *q) {
+    int val = q->data[q->front];
+    q->front = (q->front + 1) % MAX;
+    q->size--;
+    return val;
+}
+
+int main() {
+    Queue q;
+    init(&q);
+
+    char cmd;
+    int val;
+    while (scanf(" %c", &cmd) == 1) {
+        if (cmd == 'E') {
+            scanf("%d", &val);
+            enqueue(&q, val);
+        } else if (cmd == 'D') {
+            printf("%d\\n", dequeue(&q));
+        }
+    }
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "E 10\nE 20\nD\nE 30\nD\nD", expected_stdout: "10\n20\n30\n" },
+    { stdin: "E 5\nE 3\nE 8\nD\nD\nD", expected_stdout: "5\n3\n8\n" },
+    { stdin: "E 42\nD", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "The starter code is mostly complete — study it to understand how it works.",
+    "The circular buffer handles wrapping with modulo.",
+    "Each 'D' command prints the dequeued value on its own line."
+  ]}
+/>
+
+## Exercise: Hot Potato Simulation
+
+This classic problem models **circular elimination** — think "musical chairs" with a queue. N people stand in a circle, and you count off every K-th person to eliminate them.
+
+The queue makes this elegant: to "pass" a person, dequeue them from the front and enqueue them at the back. They've moved to the end of the line. Do this K-1 times, then the K-th dequeue is the person eliminated. Repeat until everyone is gone.
+
+<Exercise
+  title="Hot potato"
+  description="N people (numbered 1 to N) stand in a circle. Every K-th person is eliminated. Read N and K, then print the elimination order, one per line."
+  starterCode={`#include <stdio.h>
+
+#define MAX 1000
+
+typedef struct {
+    int data[MAX];
+    int front, rear, size;
+} Queue;
+
+void init(Queue *q) { q->front = 0; q->rear = 0; q->size = 0; }
+void enqueue(Queue *q, int v) { q->data[q->rear] = v; q->rear = (q->rear+1)%MAX; q->size++; }
+int dequeue(Queue *q) { int v = q->data[q->front]; q->front = (q->front+1)%MAX; q->size--; return v; }
+
+int main() {
+    int n, k;
+    scanf("%d %d", &n, &k);
+
+    Queue q;
+    init(&q);
+
+    // Enqueue 1..n
+    // Repeat: pass k-1 people to the back, eliminate the k-th
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5 2", expected_stdout: "2\n4\n1\n5\n3\n" },
+    { stdin: "4 1", expected_stdout: "1\n2\n3\n4\n" },
+    { stdin: "3 3", expected_stdout: "3\n1\n2\n" }
+  ]}
+  hints={[
+    "Enqueue all people 1 through N.",
+    "For each elimination: dequeue k-1 people and re-enqueue them (pass them to the back).",
+    "The k-th dequeued person is eliminated — print them.",
+    "Repeat until the queue is empty."
+  ]}
+/>
+
+## Exercise: Interleave Two Halves
+
+<Exercise
+  title="Interleave queue halves"
+  description="Read N (even number), then N integers. Split into first half and second half, then interleave them: first[0], second[0], first[1], second[1], ... Print the result space-separated."
+  starterCode={`#include <stdio.h>
+
+#define MAX 1000
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[MAX];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Interleave first half and second half
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "6\n1 2 3 4 5 6", expected_stdout: "1 4 2 5 3 6\n" },
+    { stdin: "4\n10 20 30 40", expected_stdout: "10 30 20 40\n" },
+    { stdin: "2\n1 2", expected_stdout: "1 2\n" }
+  ]}
+  hints={[
+    "The first half is indices 0 to n/2-1, the second half is n/2 to n-1.",
+    "You can use two queues or index arithmetic.",
+    "Alternate: print first_half[i], then second_half[i] for each i."
+  ]}
+/>
+
+## What's Next
+
+Now we'll explore **binary trees** — hierarchical data structures that form the foundation for efficient searching and sorting. Where stacks and queues are linear (one element follows another), trees branch, letting us represent hierarchy and make decisions at each level.

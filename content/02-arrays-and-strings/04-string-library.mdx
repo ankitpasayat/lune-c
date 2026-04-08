@@ -1,0 +1,477 @@
+---
+title: "The String Library"
+module: "Arrays and Strings"
+order: 4
+description: "Standard string functions — strlen, strcpy, strcmp, strcat, and safe alternatives."
+difficulty: "intermediate"
+---
+
+In the last lesson you built `my_strlen` and `my_strcpy` from scratch. In practice,
+you'll use the optimized versions in `<string.h>`. But these functions were designed
+in the 1970s, when security meant locking the server room door. Many of them are
+fundamentally unsafe — they trust you to get buffer sizes right, with no checking.
+
+Understanding *why* they're dangerous (and what to use instead) is as important as
+knowing how to call them.
+
+## strlen — String Length
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char msg[] = "Hello, World!";
+
+    printf("Length: %zu\\n", strlen(msg));      // 13
+    printf("sizeof: %zu\\n", sizeof(msg));      // 14 (includes \\0)
+    printf("Empty string: %zu\\n", strlen("")); // 0
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+`strlen` walks byte by byte until it finds `'\0'`. It does NOT count the null
+terminator. Notice that `strlen` is O(n) — every call scans the entire string. If
+you call `strlen` in a loop condition, you're re-scanning every iteration. Cache the
+length in a variable.
+
+## strcpy — The Dangerous Copy
+
+`strcpy` copies bytes from source to destination until it hits `'\0'`. It has no idea
+how big the destination buffer is. If the source is longer than the destination, it
+overwrites whatever is next in memory — a **buffer overflow**.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char src[] = "Hello";
+    char dest[20];
+
+    strcpy(dest, src);  // Copy src into dest
+    printf("Copied: %s\\n", dest);
+
+    // strncpy: limits the number of characters copied
+    char safe[6];
+    strncpy(safe, "Hello, World!", 5);
+    safe[5] = '\\0';  // strncpy may NOT null-terminate!
+    printf("Safe copy: %s\\n", safe);
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="warning">
+`strcpy` is one of the most exploited functions in C history. The 2003 SQL Slammer
+worm, the Morris worm of 1988, and countless other attacks exploited buffer overflows
+from unchecked string copies. Always prefer `strncpy` (with manual null termination)
+or `snprintf`.
+</Callout>
+
+The `strncpy` trap: it copies at most `n` bytes, but if the source is exactly `n`
+bytes or longer, it does NOT add a null terminator. You must always do it yourself.
+This is a design flaw, not a feature.
+
+## strcmp — String Comparison
+
+You can't compare strings with `==` in C — that compares *addresses*, not content.
+`strcmp` walks both strings character by character:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    printf("abc vs abc: %d\\n", strcmp("abc", "abc"));   // 0 (equal)
+    printf("abc vs abd: %d\\n", strcmp("abc", "abd"));   // negative
+    printf("abd vs abc: %d\\n", strcmp("abd", "abc"));   // positive
+    printf("ab vs abc:  %d\\n", strcmp("ab", "abc"));    // negative
+
+    // Common pattern: check for equality
+    char input[] = "yes";
+    if (strcmp(input, "yes") == 0) {
+        printf("User said yes!\\n");
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+`strcmp` returns 0 for equal, negative if the first string comes first alphabetically,
+positive if it comes after. The exact negative/positive value is the difference
+between the first mismatched characters — but you should only rely on the *sign*, not
+the magnitude.
+
+## strcat — Concatenation
+
+`strcat` finds the null terminator of the destination, then appends the source string
+there. Same problem as `strcpy` — it doesn't know the destination's total capacity.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char result[50] = "Hello";  // Must have room!
+
+    strcat(result, ", ");
+    strcat(result, "World!");
+
+    printf("%s\\n", result);  // Hello, World!
+    printf("Length: %zu\\n", strlen(result));
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Notice that `strcat` must find the end of the destination string first (O(n)),
+then copy (O(m)). Calling `strcat` in a loop is O(n*m) — it re-scans from the start
+every time. If you're building a long string iteratively, track the current position
+yourself or use `snprintf`.
+
+## strchr and strstr — Searching
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char text[] = "Hello, World!";
+
+    // strchr: find first occurrence of a character
+    char *found = strchr(text, 'W');
+    if (found) {
+        printf("Found 'W' at index %ld\\n", found - text);
+        printf("From 'W' onwards: %s\\n", found);
+    }
+
+    // strstr: find first occurrence of a substring
+    char *sub = strstr(text, "World");
+    if (sub) {
+        printf("Found 'World' at index %ld\\n", sub - text);
+    }
+
+    // Not found returns NULL
+    if (strchr(text, 'Z') == NULL) {
+        printf("'Z' not found\\n");
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Both return a *pointer* into the original string — not a copy. This is a common C
+pattern: functions tell you *where* in existing memory something is, rather than
+allocating new memory for a result.
+
+## snprintf — The Safe Alternative
+
+If `strcpy` and `strcat` are the old guards with trust issues, `snprintf` is the
+modern solution. It takes a size limit, always null-terminates, and can format
+values just like `printf`:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    char buffer[50];
+    int age = 25;
+    char name[] = "Alice";
+
+    // Like printf, but writes to a string
+    snprintf(buffer, sizeof(buffer), "%s is %d years old", name, age);
+    printf("%s\\n", buffer);
+
+    // Safely handles overflow — truncates and always null-terminates
+    char tiny[10];
+    snprintf(tiny, sizeof(tiny), "This is a very long string");
+    printf("Truncated: %s\\n", tiny);  // "This is a"
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+**Rule of thumb:** whenever you're tempted to use `strcpy` + `strcat`, use `snprintf`
+instead. It's one function call, it handles formatting, sizing, and null termination
+all at once. Modern C codebases use it almost exclusively for string construction.
+</Callout>
+
+## Quick Reference
+
+| Function | Purpose | Safe alternative |
+|----------|---------|-----------------|
+| `strlen(s)` | Length of string | — |
+| `strcpy(dst, src)` | Copy string | `strncpy` / `snprintf` |
+| `strcmp(a, b)` | Compare strings | `strncmp` (limit chars) |
+| `strcat(dst, src)` | Concatenate | `strncat` / `snprintf` |
+| `strchr(s, c)` | Find character | — |
+| `strstr(s, sub)` | Find substring | — |
+| `sprintf(buf, fmt, ...)` | Format into string | `snprintf` |
+
+## Character Testing with ctype.h
+
+The `<string.h>` functions operate on entire strings. But often you need to classify
+*individual characters* — is this a digit? A letter? Whitespace? The `<ctype.h>`
+header provides a family of functions for exactly this.
+
+Why not just write `(c >= 'A' && c <= 'Z')`? Two reasons. First, `ctype.h` functions
+are locale-aware — they handle accented characters and other alphabets correctly when
+your program is configured for different locales. Second, they make your intent
+explicit: `isdigit(c)` is instantly clear, while a manual range check requires the
+reader to decode what you meant.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <ctype.h>
+
+int main() {
+    char text[] = "Hello 42! How are you?";
+
+    int letters = 0, digits = 0, spaces = 0;
+
+    for (int i = 0; text[i] != '\\0'; i++) {
+        unsigned char c = text[i];
+
+        if (isalpha(c))  letters++;
+        if (isdigit(c))  digits++;
+        if (isspace(c))  spaces++;
+    }
+
+    printf("Letters: %d, Digits: %d, Spaces: %d\\n", letters, digits, spaces);
+
+    // Conversion functions
+    char lower[] = "hello";
+    printf("Uppercase: ");
+    for (int i = 0; lower[i]; i++) {
+        putchar(toupper((unsigned char)lower[i]));
+    }
+    printf("\\n");
+
+    // Check character classes
+    printf("isalnum('A'): %d\\n", isalnum('A') != 0);  // 1 (letter or digit)
+    printf("isupper('a'): %d\\n", isupper('a') != 0);  // 0
+    printf("islower('a'): %d\\n", islower('a') != 0);  // 1
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+The `ctype.h` functions take `int`, not `char`. If your `char` is signed and holds a
+negative value, passing it directly is undefined behavior. Cast to `unsigned char`
+first: `isalpha((unsigned char)c)`. This also lets the functions handle `EOF`
+correctly, since `EOF` is typically -1.
+</Callout>
+
+Here are the most useful functions:
+
+| Function | Tests for |
+|----------|-----------|
+| `isalpha(c)` | Letter (a-z, A-Z) |
+| `isdigit(c)` | Digit (0-9) |
+| `isalnum(c)` | Letter or digit |
+| `isspace(c)` | Whitespace (space, tab, newline, etc.) |
+| `isupper(c)` | Uppercase letter |
+| `islower(c)` | Lowercase letter |
+| `toupper(c)` | Convert to uppercase (returns unchanged if not lowercase) |
+| `tolower(c)` | Convert to lowercase (returns unchanged if not uppercase) |
+
+## Number Conversion: strtol and strtod
+
+You've probably seen `atoi` — it converts a string to an integer. The problem?
+It silently returns 0 for *both* `"0"` and `"abc"`. `atoi("42abc")` returns 42 with
+no indication that the input was invalid. In real programs, silent data corruption is
+worse than a crash.
+
+`strtol` (string-to-long) solves this with an `endptr` parameter — a pointer that
+gets set to the first character *after* the number. If `endptr` points to the start
+of the string, no conversion happened. If it points to a non-null character, there
+was trailing garbage. This gives you full control over error detection.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+void safe_parse(const char *str) {
+    char *endptr;
+    errno = 0;
+    long value = strtol(str, &endptr, 10);  // base 10
+
+    if (endptr == str) {
+        printf("  \\"%s\\": no digits found\\n", str);
+    } else if (*endptr != '\\0') {
+        printf("  \\"%s\\": partial parse -> %ld (leftover: \\"%s\\")\\n",
+               str, value, endptr);
+    } else if (errno != 0) {
+        printf("  \\"%s\\": overflow or underflow\\n", str);
+    } else {
+        printf("  \\"%s\\": valid -> %ld\\n", str, value);
+    }
+}
+
+int main() {
+    printf("strtol results:\\n");
+    safe_parse("42");
+    safe_parse("42abc");
+    safe_parse("abc");
+    safe_parse("0");
+    safe_parse("  -123");
+    safe_parse("99999999999999999999");
+
+    // strtod works the same way for floating-point
+    char *end;
+    double d = strtod("3.14xyz", &end);
+    printf("\\nstrtod: %f (leftover: \\"%s\\")\\n", d, end);
+
+    return 0;
+}
+`} />
+
+The third argument to `strtol` is the base — use 10 for decimal, 16 for hex, 0 to
+auto-detect (prefix `0x` for hex, `0` for octal, else decimal). `strtod` works
+identically for floating-point numbers but has no base parameter.
+
+<Callout type="warning">
+Never use `atoi` in production code. It has no way to report errors. Use `strtol` and
+check the `endptr` and `errno`. The few extra lines are worth the safety.
+</Callout>
+
+## Memory Functions: memcpy, memmove, memset
+
+Everything so far works with *strings* — null-terminated character arrays. But C also
+gives you functions that work on raw *bytes*, with no null terminator involved. These
+live in `<string.h>` alongside the string functions.
+
+**`memset(ptr, value, n)`** fills `n` bytes starting at `ptr` with the byte `value`.
+The most common use is zeroing out arrays or structs: `memset(arr, 0, sizeof(arr))`.
+
+**`memcpy(dest, src, n)`** copies `n` bytes from `src` to `dest`. It's the fastest
+copy function, but it requires that `src` and `dest` do NOT overlap. If they do, the
+behavior is undefined — it might work, or it might corrupt your data.
+
+**`memmove(dest, src, n)`** also copies `n` bytes, but it correctly handles the case
+where `src` and `dest` overlap. Internally it may copy backwards or use a temporary
+buffer. Slightly slower than `memcpy`, but always safe.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    // memset: zero an array
+    int scores[5];
+    memset(scores, 0, sizeof(scores));
+    printf("Zeroed: ");
+    for (int i = 0; i < 5; i++) printf("%d ", scores[i]);
+    printf("\\n");
+
+    // memcpy: fast copy between non-overlapping buffers
+    int src[] = {10, 20, 30, 40, 50};
+    int dst[5];
+    memcpy(dst, src, sizeof(src));
+    printf("Copied: ");
+    for (int i = 0; i < 5; i++) printf("%d ", dst[i]);
+    printf("\\n");
+
+    // memmove: safe copy with overlapping memory
+    // Shift elements right by 1 position (overlapping!)
+    int arr[] = {1, 2, 3, 4, 5};
+    memmove(&arr[1], &arr[0], 4 * sizeof(int));  // overlap is fine
+    arr[0] = 0;
+    printf("Shifted: ");
+    for (int i = 0; i < 5; i++) printf("%d ", arr[i]);
+    printf("\\n");
+
+    // memcpy on the overlapping case above would be UNDEFINED BEHAVIOR
+    // Always use memmove when regions might overlap
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+When in doubt, use `memmove`. The performance difference is negligible, and it's
+always correct. Only reach for `memcpy` when you've verified the regions don't overlap
+and you need every nanosecond (rare).
+</Callout>
+
+## Exercise: Word Counter
+
+<Exercise
+  title="Count words"
+  description="Read a line of text (using fgets). Print the number of words. Words are separated by single spaces. Assume no leading/trailing spaces."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char line[200];
+    fgets(line, sizeof(line), stdin);
+    line[strcspn(line, "\\n")] = '\\0';  // Remove newline
+
+    // Count and print the number of words
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "hello world", expected_stdout: "2\n" },
+    { stdin: "one two three four five", expected_stdout: "5\n" },
+    { stdin: "single", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "Words = number of spaces + 1 (assuming no leading/trailing spaces).",
+    "Count spaces: for (int i = 0; line[i] != '\\0'; i++) if (line[i] == ' ') count++; then print count + 1."
+  ]}
+/>
+
+## Exercise: String Palindrome
+
+<Exercise
+  title="Palindrome check"
+  description="Read a word from stdin. Print 'yes' if it reads the same forwards and backwards, 'no' otherwise."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char word[100];
+    scanf("%99s", word);
+
+    // Check if palindrome
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "racecar", expected_stdout: "yes\n" },
+    { stdin: "hello", expected_stdout: "no\n" },
+    { stdin: "a", expected_stdout: "yes\n" },
+    { stdin: "abba", expected_stdout: "yes\n" }
+  ]}
+  hints={[
+    "Compare characters from both ends moving inward.",
+    "Use two indices: left starting at 0, right starting at strlen(word) - 1. Compare word[left] and word[right], then move inward."
+  ]}
+/>
+
+## Exercise: Character Frequency
+
+<Exercise
+  title="Most frequent character"
+  description="Read a word (lowercase only). Print the character that appears most often. If there's a tie, print the one that comes first alphabetically."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    char word[100];
+    scanf("%99s", word);
+
+    // Find and print the most frequent character
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "programming", expected_stdout: "g\n" },
+    { stdin: "hello", expected_stdout: "l\n" },
+    { stdin: "aabbcc", expected_stdout: "a\n" }
+  ]}
+  hints={[
+    "Use an array of 26 counters (one per letter): int freq[26] = {0};",
+    "Increment: freq[word[i] - 'a']++. Then find the index with the highest count."
+  ]}
+/>

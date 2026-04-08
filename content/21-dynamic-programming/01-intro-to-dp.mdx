@@ -1,0 +1,356 @@
+---
+title: "Introduction to Dynamic Programming"
+module: "dynamic-programming"
+order: 1
+description: "Learn the core ideas behind DP: overlapping subproblems, optimal substructure, memoization, and tabulation."
+difficulty: "intermediate"
+---
+
+# Introduction to Dynamic Programming
+
+Let's start with a question. You already know how to compute Fibonacci numbers
+recursively. Try running `fib(45)` in the editor below — then wait:
+
+<Editor defaultCode={`#include <stdio.h>
+
+long fib(int n) {
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main(void) {
+    // Try changing 10 to 45 and feel the pain
+    for (int i = 0; i < 10; i++) {
+        printf("fib(%d) = %ld\\n", i, fib(i));
+    }
+    return 0;
+}
+`} />
+
+Why is `fib(45)` so slow when `fib(10)` is instant? The answer isn't just "it's
+exponential." Let's actually see what's happening.
+
+## The Waste You Can't See
+
+Add a counter. Every time `fib()` is called, increment it:
+
+<Editor defaultCode={`#include <stdio.h>
+
+long call_count = 0;
+
+long fib(int n) {
+    call_count++;
+    if (n <= 1) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main(void) {
+    for (int n = 10; n <= 40; n += 5) {
+        call_count = 0;
+        long result = fib(n);
+        printf("fib(%d) = %-12ld  calls: %ld\\n", n, result, call_count);
+    }
+    return 0;
+}
+`} />
+
+`fib(30)` makes over **2 million** function calls. `fib(40)` makes over **300 million**.
+But there are only 41 unique subproblems (fib(0) through fib(40)). So **the vast majority
+of those calls are computing answers we've already computed before**.
+
+Think about what happens when you compute `fib(5)`:
+
+```
+fib(5)
+├── fib(4)
+│   ├── fib(3)
+│   │   ├── fib(2)
+│   │   └── fib(1)
+│   └── fib(2)           ← already computed above!
+└── fib(3)               ← this entire subtree is redundant!
+    ├── fib(2)
+    └── fib(1)
+```
+
+`fib(3)` is computed **twice**. `fib(2)` is computed **three times**. As `n` grows,
+this redundancy compounds exponentially. That's the core insight behind dynamic programming:
+
+<Callout type="info">
+**Dynamic programming is not a clever algorithm. It's the recognition that you're
+solving the same problems over and over — and the discipline to stop doing that.**
+</Callout>
+
+## The Two Properties
+
+Not every problem benefits from DP. You need two things:
+
+**1. Overlapping subproblems** — the same smaller problem appears multiple times during
+the recursive computation. Fibonacci has this: `fib(5)` and `fib(4)` both need `fib(3)`.
+Merge sort does NOT have this — each subarray is split independently and never reappears.
+
+**2. Optimal substructure** — an optimal solution to the whole problem can be built
+from optimal solutions to its subproblems. The shortest path from A to C through B is
+the shortest path from A to B plus the shortest path from B to C.
+
+When both are present, you can store subproblem answers and reuse them.
+
+## Fix #1: Memoization (Top-Down)
+
+The simplest fix: keep doing recursion, but write down each answer the first time
+you compute it. Before computing anything, check if you already have the answer:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_N 100
+
+long memo[MAX_N];
+long call_count = 0;
+
+long fib(int n) {
+    call_count++;
+    if (n <= 1) return n;
+
+    // Already solved this one? Return the saved answer.
+    if (memo[n] != -1) return memo[n];
+
+    // First time seeing this subproblem. Solve it, then save.
+    memo[n] = fib(n - 1) + fib(n - 2);
+    return memo[n];
+}
+
+int main(void) {
+    memset(memo, -1, sizeof(memo));
+
+    for (int n = 10; n <= 45; n += 5) {
+        call_count = 0;
+        memset(memo, -1, sizeof(memo));
+        long result = fib(n);
+        printf("fib(%d) = %-12ld  calls: %ld\\n", n, result, call_count);
+    }
+    return 0;
+}
+`} />
+
+Look at the call counts now. `fib(45)` makes fewer than 100 calls instead of billions.
+Every subproblem is solved exactly once; every subsequent request is a table lookup.
+
+<Complexity time="O(n)" space="O(n)" />
+
+This approach is called **memoization** (not memorization — no 'r'). It's sometimes
+called "top-down" because you start from the big problem and work downward, saving
+results as you go.
+
+## Fix #2: Tabulation (Bottom-Up)
+
+Memoization still uses recursion, which means it still uses the call stack. For very
+large `n`, you'll hit a stack overflow. There's an alternative: skip the recursion
+entirely and fill in the answers from the bottom up.
+
+Think about it — you already know the dependency structure. `fib(n)` needs `fib(n-1)`
+and `fib(n-2)`. So if you compute `fib(0)`, then `fib(1)`, then `fib(2)`, and so on...
+every value you need is already in the table by the time you need it:
+
+<Editor defaultCode={`#include <stdio.h>
+
+long fib(int n) {
+    if (n <= 1) return n;
+
+    long dp[n + 1];
+    dp[0] = 0;
+    dp[1] = 1;
+
+    for (int i = 2; i <= n; i++) {
+        dp[i] = dp[i - 1] + dp[i - 2];
+    }
+    return dp[n];
+}
+
+int main(void) {
+    for (int i = 0; i <= 45; i++) {
+        printf("fib(%d) = %ld\\n", i, fib(i));
+    }
+    return 0;
+}
+`} />
+
+No recursion. No call stack. Just a loop and an array. This is **tabulation** — you build
+a table of answers to all subproblems, starting from the smallest.
+
+## Fix #3: Space Optimization
+
+Look at the tabulation loop: `dp[i] = dp[i-1] + dp[i-2]`. At each step, you only look
+back at the **two most recent values**. So why keep the entire table?
+
+<Editor defaultCode={`#include <stdio.h>
+
+long fib(int n) {
+    if (n <= 1) return n;
+
+    long prev2 = 0, prev1 = 1;
+    for (int i = 2; i <= n; i++) {
+        long curr = prev1 + prev2;
+        prev2 = prev1;
+        prev1 = curr;
+    }
+    return prev1;
+}
+
+int main(void) {
+    for (int i = 0; i <= 45; i++) {
+        printf("fib(%d) = %ld\\n", i, fib(i));
+    }
+    return 0;
+}
+`} />
+
+<Complexity time="O(n)" space="O(1)" />
+
+Not every DP problem can be space-optimized this way — it depends on how far back
+each subproblem looks. But always ask yourself: *do I actually need the whole table,
+or just the last few entries?*
+
+## The DP Development Process
+
+Here's the workflow you should follow for every DP problem:
+
+1. **Write the brute-force recursive solution first.** Don't even think about DP yet.
+   Just solve the problem recursively.
+2. **Find the overlap.** Are there subproblems being solved more than once? Add a
+   counter like we did above if you're not sure.
+3. **Add memoization.** This is the easiest step — just add a cache.
+4. **Convert to tabulation** (optional but recommended). Figure out the order of
+   computation and fill the table iteratively.
+5. **Optimize space** (optional). Check how far back the recurrence looks.
+
+<Callout type="tip">
+Don't try to jump straight to the tabulation solution. Start recursive, then optimize.
+The recursive solution IS the recurrence relation — the DP table just computes it
+without the overhead.
+</Callout>
+
+## Memoization vs Tabulation
+
+| Aspect | Memoization (Top-Down) | Tabulation (Bottom-Up) |
+|--------|----------------------|----------------------|
+| How you think | "What do I need? Let me compute it." | "What can I build from what I already have?" |
+| Subproblems | Solves only the ones actually needed | Solves all of them (some may be unnecessary) |
+| Stack | Uses call stack (risk of overflow for large n) | No recursion overhead |
+| Starting point | Easier to write — just add a cache to your recursion | Requires understanding the computation order |
+
+In practice, start with memoization to verify your recurrence is correct. Convert to
+tabulation when you need the performance or when the recursion depth is a problem.
+
+## Climbing Stairs — Your First "Hidden" DP Problem
+
+Here's a problem that doesn't look like Fibonacci at all:
+
+**You're climbing a staircase with `n` steps. At each step, you can climb 1 or 2 stairs.
+How many distinct ways can you reach the top?**
+
+Don't read ahead. Think about it. Let's count manually:
+
+- **n=1:** Just take 1 step. **1 way.**
+- **n=2:** Take 1+1 or take 2. **2 ways.**
+- **n=3:** (1+1+1), (1+2), (2+1). **3 ways.**
+- **n=4:** (1+1+1+1), (1+1+2), (1+2+1), (2+1+1), (2+2). **5 ways.**
+
+1, 2, 3, 5... That's the Fibonacci sequence. But **why?**
+
+Think about it this way: to reach step `n`, your *last* move was either a 1-step (from
+step `n-1`) or a 2-step (from step `n-2`). So the number of ways to reach step `n`
+is the number of ways to reach step `n-1` plus the number of ways to reach step `n-2`.
+
+That's `ways(n) = ways(n-1) + ways(n-2)` — literally the Fibonacci recurrence, with
+different base cases (`ways(1)=1`, `ways(2)=2`).
+
+<Editor defaultCode={`#include <stdio.h>
+
+int climb_stairs(int n) {
+    if (n <= 2) return n;
+
+    int prev2 = 1, prev1 = 2;
+    for (int i = 3; i <= n; i++) {
+        int curr = prev1 + prev2;
+        prev2 = prev1;
+        prev1 = curr;
+    }
+    return prev1;
+}
+
+int main(void) {
+    int n;
+    scanf("%d", &n);
+    printf("%d\\n", climb_stairs(n));
+    return 0;
+}
+`} stdin="5" />
+
+<Complexity time="O(n)" space="O(1)" />
+
+The lesson here: **the hard part of DP is not writing the code. It's recognizing the
+recurrence.** Once you see "to solve for n, I need answers to smaller versions of the
+same problem, and those smaller versions overlap," you're doing DP.
+
+## Exercise: Tribonacci Number
+
+<Exercise
+  title="Tribonacci Number"
+  description="The Tribonacci sequence: T(0)=0, T(1)=1, T(2)=1, and T(n) = T(n-1) + T(n-2) + T(n-3) for n >= 3. Given n, compute T(n). Read n from stdin, print T(n)."
+  starterCode={`#include <stdio.h>
+
+int tribonacci(int n) {
+    // Your code here
+}
+
+int main(void) {
+    int n;
+    scanf("%d", &n);
+    printf("%d\\n", tribonacci(n));
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "0", expected_stdout: "0\n" },
+    { stdin: "4", expected_stdout: "4\n" },
+    { stdin: "10", expected_stdout: "149\n" },
+    { stdin: "25", expected_stdout: "1389537\n" }
+  ]}
+  hints={[
+    "This is like Fibonacci but with three previous values instead of two.",
+    "Use three variables: prev3, prev2, prev1. Update them in a loop from i=3 to n.",
+    "Base cases: T(0)=0, T(1)=1, T(2)=1. For i>=3: curr = prev1 + prev2 + prev3."
+  ]}
+/>
+
+## Exercise: Min Cost Climbing Stairs
+
+<Exercise
+  title="Min Cost Climbing Stairs"
+  description="Given n costs (one per stair), find the minimum cost to reach the top. You can start from step 0 or step 1, and at each step climb 1 or 2 stairs. Read n, then n integers. Print the minimum cost."
+  starterCode={`#include <stdio.h>
+
+int main(void) {
+    int n;
+    scanf("%d", &n);
+
+    int cost[n];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &cost[i]);
+    }
+
+    // Your DP solution here
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n10 15 20", expected_stdout: "15\n" },
+    { stdin: "10\n1 100 1 1 1 100 1 1 100 1", expected_stdout: "6\n" }
+  ]}
+  hints={[
+    "dp[i] = minimum cost to reach step i. dp[i] = cost[i] + min(dp[i-1], dp[i-2]).",
+    "Base cases: dp[0] = cost[0], dp[1] = cost[1]. Answer is min(dp[n-1], dp[n-2]).",
+    "You can optimize space to O(1) since you only need the last two values."
+  ]}
+/>

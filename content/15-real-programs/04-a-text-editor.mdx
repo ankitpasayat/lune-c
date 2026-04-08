@@ -1,0 +1,427 @@
+---
+title: "A Text Editor"
+module: "Building Real Programs"
+order: 4
+description: "Build a minimal terminal text editor with raw mode input, a gap buffer, and screen rendering."
+difficulty: "advanced"
+---
+
+Let's build a minimal text editor like `nano` or `kilo`. This ties together terminal I/O, data structures, and system calls.
+
+## Terminal Raw Mode
+
+Terminals normally operate in **cooked mode**: input is line-buffered and special keys are interpreted. For an editor, we need **raw mode**: every keypress delivered immediately.
+
+<Editor defaultCode={`#include <stdio.h>
+
+// In a real editor, you'd do:
+// #include <termios.h>
+// #include <unistd.h>
+//
+// struct termios orig;
+//
+// void enable_raw_mode() {
+//     tcgetattr(STDIN_FILENO, &orig);
+//     struct termios raw = orig;
+//     raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+//     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+//     raw.c_oflag &= ~(OPOST);
+//     raw.c_cflag |= (CS8);
+//     raw.c_cc[VMIN] = 0;
+//     raw.c_cc[VTIME] = 1;  // 100ms timeout
+//     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+// }
+//
+// void disable_raw_mode() {
+//     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig);
+// }
+
+int main() {
+    printf("Terminal modes:\\n\\n");
+    printf("COOKED (default):\\n");
+    printf("  - Input buffered until Enter\\n");
+    printf("  - Ctrl+C sends SIGINT\\n");
+    printf("  - Backspace handled by terminal\\n\\n");
+    printf("RAW:\\n");
+    printf("  - Every keypress read immediately\\n");
+    printf("  - No echo (we control display)\\n");
+    printf("  - No signal processing\\n");
+    printf("  - We handle Ctrl+C, arrows, etc.\\n\\n");
+
+    printf("Key flags to disable:\\n");
+    printf("  ECHO   - don't echo typed characters\\n");
+    printf("  ICANON - disable canonical (line) mode\\n");
+    printf("  ISIG   - disable Ctrl+C/Ctrl+Z signals\\n");
+    printf("  IXON   - disable Ctrl+S/Ctrl+Q flow control\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+Always restore the original terminal settings on exit. Use `atexit(disable_raw_mode)` to ensure cleanup even on abnormal exits.
+</Callout>
+
+## The Gap Buffer
+
+A gap buffer is a simple data structure for text editing. It's an array with a "gap" at the cursor position:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+#define BUF_SIZE 256
+
+typedef struct {
+    char buf[BUF_SIZE];
+    int gap_start;  // Start of gap
+    int gap_end;    // End of gap (exclusive)
+    int size;       // Total buffer size
+} GapBuffer;
+
+void gb_init(GapBuffer *gb) {
+    memset(gb->buf, 0, BUF_SIZE);
+    gb->gap_start = 0;
+    gb->gap_end = BUF_SIZE;
+    gb->size = BUF_SIZE;
+}
+
+int gb_length(GapBuffer *gb) {
+    return gb->size - (gb->gap_end - gb->gap_start);
+}
+
+void gb_insert(GapBuffer *gb, char c) {
+    if (gb->gap_start == gb->gap_end) return;  // Buffer full
+    gb->buf[gb->gap_start++] = c;
+}
+
+void gb_delete(GapBuffer *gb) {
+    if (gb->gap_start > 0) {
+        gb->gap_start--;
+    }
+}
+
+void gb_move_left(GapBuffer *gb) {
+    if (gb->gap_start > 0) {
+        gb->gap_end--;
+        gb->buf[gb->gap_end] = gb->buf[gb->gap_start - 1];
+        gb->gap_start--;
+    }
+}
+
+void gb_move_right(GapBuffer *gb) {
+    if (gb->gap_end < gb->size) {
+        gb->buf[gb->gap_start] = gb->buf[gb->gap_end];
+        gb->gap_start++;
+        gb->gap_end++;
+    }
+}
+
+// Get the text content (without gap)
+void gb_contents(GapBuffer *gb, char *out) {
+    int j = 0;
+    for (int i = 0; i < gb->gap_start; i++) out[j++] = gb->buf[i];
+    for (int i = gb->gap_end; i < gb->size; i++) out[j++] = gb->buf[i];
+    out[j] = '\\0';
+}
+
+// Visualize the buffer internals
+void gb_debug(GapBuffer *gb) {
+    printf("Buffer: [");
+    for (int i = 0; i < gb->gap_start; i++) printf("%c", gb->buf[i]);
+    printf("|GAP(%d)|", gb->gap_end - gb->gap_start);
+    for (int i = gb->gap_end; i < gb->size; i++) printf("%c", gb->buf[i]);
+    printf("]\\n");
+}
+
+int main() {
+    GapBuffer gb;
+    gb_init(&gb);
+
+    printf("=== Gap Buffer Demo ===\\n\\n");
+
+    // Type "Hello World"
+    const char *text = "Hello World";
+    for (int i = 0; text[i]; i++) gb_insert(&gb, text[i]);
+    gb_debug(&gb);
+
+    char out[BUF_SIZE];
+    gb_contents(&gb, out);
+    printf("Text: '%s' (len=%d)\\n\\n", out, gb_length(&gb));
+
+    // Move cursor left 5 times (past "World")
+    for (int i = 0; i < 5; i++) gb_move_left(&gb);
+    printf("After moving left 5:\\n");
+    gb_debug(&gb);
+
+    // Delete one char (the space)
+    gb_delete(&gb);
+    printf("After deleting 1 char:\\n");
+    gb_debug(&gb);
+
+    // Insert ", "
+    gb_insert(&gb, ',');
+    gb_insert(&gb, ' ');
+    printf("After inserting ', ':\\n");
+    gb_debug(&gb);
+
+    gb_contents(&gb, out);
+    printf("\\nFinal text: '%s'\\n", out);
+
+    return 0;
+}
+`} />
+
+## Screen Rendering with ANSI Escape Codes
+
+<Editor defaultCode={`#include <stdio.h>
+
+// ANSI escape sequences for terminal control
+
+int main() {
+    printf("ANSI Escape Codes for Editors:\\n\\n");
+
+    // Common escape sequences
+    printf("Cursor control:\\n");
+    printf("  \\\\033[H      - Move to top-left\\n");
+    printf("  \\\\033[r;cH   - Move to row r, col c\\n");
+    printf("  \\\\033[A/B/C/D - Up/Down/Right/Left\\n\\n");
+
+    printf("Screen control:\\n");
+    printf("  \\\\033[2J   - Clear entire screen\\n");
+    printf("  \\\\033[K    - Clear to end of line\\n\\n");
+
+    printf("Text style:\\n");
+    printf("  \\\\033[7m   - Inverse (for status bar)\\n");
+    printf("  \\\\033[0m   - Reset formatting\\n\\n");
+
+    // Demonstrate
+    printf("--- Status Bar Demo ---\\n");
+    printf("\\033[7m editor.c | Ln 42, Col 15 | Modified \\033[0m\\n");
+    printf("--- Normal Text ---\\n");
+
+    printf("\\nRendering loop pseudocode:\\n");
+    printf("  1. Write \\\\033[H (cursor home)\\n");
+    printf("  2. For each row: write text + \\\\033[K (clear rest)\\n");
+    printf("  3. Draw status bar with \\\\033[7m (inverted)\\n");
+    printf("  4. Position cursor at edit position\\n");
+    printf("  5. Flush output buffer\\n");
+
+    return 0;
+}
+`} />
+
+## Editor Architecture
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// A minimal editor has these components:
+
+// 1. ROWS: array of text lines
+#define MAX_ROWS 1000
+#define MAX_COLS 256
+
+typedef struct {
+    char chars[MAX_COLS];
+    int len;
+} Row;
+
+typedef struct {
+    Row rows[MAX_ROWS];
+    int num_rows;
+    int cursor_x, cursor_y;
+    int row_offset;     // Scroll position
+    int col_offset;
+    int screen_rows;
+    int screen_cols;
+    char filename[256];
+    int modified;
+} Editor;
+
+void editor_init(Editor *e) {
+    memset(e, 0, sizeof(Editor));
+    e->screen_rows = 24;
+    e->screen_cols = 80;
+}
+
+void editor_insert_char(Editor *e, char c) {
+    if (e->cursor_y >= e->num_rows) {
+        // Add new row
+        e->rows[e->num_rows].len = 0;
+        e->num_rows++;
+    }
+
+    Row *row = &e->rows[e->cursor_y];
+    if (row->len < MAX_COLS - 1) {
+        // Shift chars right
+        memmove(&row->chars[e->cursor_x + 1],
+                &row->chars[e->cursor_x],
+                row->len - e->cursor_x);
+        row->chars[e->cursor_x] = c;
+        row->len++;
+        e->cursor_x++;
+        e->modified = 1;
+    }
+}
+
+void editor_insert_newline(Editor *e) {
+    if (e->num_rows >= MAX_ROWS - 1) return;
+
+    Row *cur = &e->rows[e->cursor_y];
+
+    // Shift rows down
+    for (int i = e->num_rows; i > e->cursor_y + 1; i--) {
+        e->rows[i] = e->rows[i - 1];
+    }
+    e->num_rows++;
+
+    // Split current row
+    Row *next = &e->rows[e->cursor_y + 1];
+    int split = e->cursor_x;
+    memcpy(next->chars, &cur->chars[split], cur->len - split);
+    next->len = cur->len - split;
+    cur->len = split;
+
+    e->cursor_y++;
+    e->cursor_x = 0;
+    e->modified = 1;
+}
+
+int main() {
+    Editor e;
+    editor_init(&e);
+
+    // Simulate typing
+    const char *lines[] = {
+        "#include <stdio.h>",
+        "",
+        "int main() {",
+        "    printf(\"Hello!\\\\n\");",
+        "    return 0;",
+        "}"
+    };
+
+    for (int i = 0; i < 6; i++) {
+        for (int j = 0; lines[i][j]; j++) {
+            editor_insert_char(&e, lines[i][j]);
+        }
+        editor_insert_newline(&e);
+    }
+
+    printf("Editor state: %d rows\\n\\n", e.num_rows);
+    for (int i = 0; i < e.num_rows; i++) {
+        e.rows[i].chars[e.rows[i].len] = '\\0';
+        printf("%3d | %s\\n", i + 1, e.rows[i].chars);
+    }
+
+    printf("\\nCursor at: row %d, col %d\\n", e.cursor_y + 1, e.cursor_x);
+    printf("Modified: %s\\n", e.modified ? "yes" : "no");
+
+    return 0;
+}
+`} />
+
+<Callout type="tip">
+The `kilo` editor by Salvatore Sanfilippo (antirez) is an excellent reference — a complete editor in ~1000 lines of C. The tutorial at https://viewsourcecode.org/snaptoken/kilo/ walks through building it step by step.
+</Callout>
+
+## Exercise: Line Buffer Operations
+
+<Exercise
+  title="Text line operations"
+  description="Read a string (initial text), then N operations. Operations: 'I pos char' (insert char at position), 'D pos' (delete char at position), 'P' (print current string). Execute each operation and print the string when P is encountered."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_LEN 1024
+
+int main() {
+    char text[MAX_LEN];
+    scanf("%s", text);
+    int len = strlen(text);
+
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char op;
+        scanf(" %c", &op);
+
+        if (op == 'I') {
+            int pos;
+            char c;
+            scanf("%d %c", &pos, &c);
+            // TODO: Insert c at position pos
+            // Shift characters right
+
+        } else if (op == 'D') {
+            int pos;
+            scanf("%d", &pos);
+            // TODO: Delete character at position pos
+            // Shift characters left
+
+        } else if (op == 'P') {
+            printf("%s\\n", text);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "Hello\n3\nI 5 !\nP\nD 0\nP", expected_stdout: "Hello!\nello!\n" },
+    { stdin: "abc\n4\nI 1 X\nP\nD 2\nP", expected_stdout: "aXbc\naXc\n" },
+    { stdin: "test\n2\nI 0 A\nP", expected_stdout: "Atest\n" },
+    { stdin: "abcdef\n3\nD 5\nD 4\nP", expected_stdout: "abcd\n" }
+  ]}
+  hints={[
+    "For insert: use memmove to shift chars right from pos, then place the new char.",
+    "For delete: use memmove to shift chars left from pos+1.",
+    "Don't forget to update len after each insert (len++) or delete (len--).",
+    "Null-terminate: text[len] = '\\0' after modifying."
+  ]}
+/>
+
+## Exercise: Simple Text Formatter
+
+<Exercise
+  title="Word wrap"
+  description="Read a maximum line width W and a block of text (words separated by spaces, all on one line). Wrap the text so no line exceeds W characters. Words are separated by single spaces. If a word would make the line exceed W, start a new line. Print the wrapped text."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_TEXT 4096
+
+int main() {
+    int width;
+    scanf("%d ", &width);
+
+    char text[MAX_TEXT];
+    fgets(text, MAX_TEXT, stdin);
+    size_t len = strlen(text);
+    if (len > 0 && text[len - 1] == '\\n') text[len - 1] = '\\0';
+
+    // TODO: Word-wrap text to 'width' columns
+    // Split into words, add to current line
+    // If adding a word would exceed width, start new line
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "10\nhello world foo bar", expected_stdout: "hello\nworld foo\nbar\n" },
+    { stdin: "20\nthe quick brown fox jumps over the lazy dog", expected_stdout: "the quick brown fox\njumps over the lazy\ndog\n" },
+    { stdin: "5\na b c d e", expected_stdout: "a b c\nd e\n" },
+    { stdin: "80\nshort line", expected_stdout: "short line\n" }
+  ]}
+  hints={[
+    "Use strtok to split the text into words.",
+    "Track the current line length.",
+    "If current_length + 1 + word_length > width, print a newline first.",
+    "The first word on each line has no leading space."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next: **Debugging & Testing** — using GDB, Valgrind, and sanitizers to find and fix bugs.

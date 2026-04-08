@@ -1,0 +1,417 @@
+---
+title: "Linked List Exercises"
+module: "Linked Lists"
+order: 4
+description: "Classic linked list problems — reverse, detect cycle, merge sorted, and more."
+difficulty: "intermediate"
+---
+
+These are the problems that show up in interviews, in systems code, and in exam questions — over and over. They're not just exercises; they're **patterns** you'll recognize and reuse for years. Each one teaches a different fundamental technique for working with pointers.
+
+## Reverse a Linked List
+
+Reversing a singly linked list is arguably the single most important linked list operation to understand. It tests whether you can hold a mental model of pointers as they change, and it's a building block for many harder algorithms (palindrome checking, reversing parts of a list, etc.).
+
+The idea is surprisingly simple: walk through the list, and at each node, flip its `next` pointer to point *backward* instead of forward. The trick is that you need three pointers to pull this off without losing track of the remaining list.
+
+Let's trace through reversing `1 -> 2 -> 3 -> NULL` step by step:
+
+```
+  Start:
+    prev = NULL
+    curr = [1] -> [2] -> [3] -> NULL
+
+  Iteration 1 (at node 1):
+    next = curr->next       // next = [2]  (save our lifeline to the rest)
+    curr->next = prev       // [1] -> NULL  (flip! node 1 now points backward)
+    prev = curr             // prev = [1]  (advance prev)
+    curr = next             // curr = [2]  (advance curr)
+
+    State: NULL <- [1]    [2] -> [3] -> NULL
+                   prev   curr
+
+  Iteration 2 (at node 2):
+    next = curr->next       // next = [3]
+    curr->next = prev       // [2] -> [1]  (flip! node 2 points to node 1)
+    prev = curr             // prev = [2]
+    curr = next             // curr = [3]
+
+    State: NULL <- [1] <- [2]    [3] -> NULL
+                          prev   curr
+
+  Iteration 3 (at node 3):
+    next = curr->next       // next = NULL
+    curr->next = prev       // [3] -> [2]  (flip!)
+    prev = curr             // prev = [3]
+    curr = next             // curr = NULL
+
+    State: NULL <- [1] <- [2] <- [3]
+                                 prev   curr = NULL (done!)
+
+  Result: prev is the new head -> [3] -> [2] -> [1] -> NULL
+```
+
+The three pointers each play a distinct role:
+- **`prev`**: the node we just processed (what `curr` should now point to).
+- **`curr`**: the node we're currently flipping.
+- **`next`**: saved before we overwrite `curr->next`, so we don't lose the rest of the list.
+
+Without `next`, the moment you write `curr->next = prev`, you've severed the link to the rest of the chain. The `next` pointer is your lifeline — save it *before* you cut the rope.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int d) {
+    Node *n = malloc(sizeof(Node));
+    n->data = d;
+    n->next = NULL;
+    return n;
+}
+
+Node *reverse(Node *head) {
+    Node *prev = NULL;
+    Node *curr = head;
+    while (curr != NULL) {
+        Node *next = curr->next;  // save next
+        curr->next = prev;        // flip pointer
+        prev = curr;              // advance prev
+        curr = next;              // advance curr
+    }
+    return prev;  // prev is the new head
+}
+
+void print_list(Node *h) {
+    while (h) { printf("%d ", h->data); h = h->next; }
+    printf("\\n");
+}
+void free_list(Node *h) {
+    while (h) { Node *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    Node *head = NULL;
+    for (int i = 5; i >= 1; i--) {
+        Node *n = create_node(i);
+        n->next = head;
+        head = n;
+    }
+
+    printf("Original: ");
+    print_list(head);
+
+    head = reverse(head);
+    printf("Reversed: ");
+    print_list(head);
+
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="info">
+This uses three pointers — `prev`, `curr`, `next` — and iterates once through the list. Memorize this pattern; it appears everywhere.
+</Callout>
+
+## Detect a Cycle (Floyd's Algorithm)
+
+How do you detect if a linked list has a cycle — a node whose `next` pointer leads back to an earlier node, creating an infinite loop?
+
+The naive approach: keep a set of visited nodes and check each one. That works but costs O(n) extra memory. Floyd's algorithm does it in O(1) space using two pointers moving at different speeds.
+
+**The running track analogy**: Imagine two runners on a circular track. One runs at normal speed, the other at double speed. If the track is circular, the fast runner will eventually lap the slow runner — they'll meet. If the track is a straight line (no cycle), the fast runner simply reaches the end first and stops.
+
+This is exactly how Floyd's algorithm works:
+- **Slow pointer**: advances 1 node at a time.
+- **Fast pointer**: advances 2 nodes at a time.
+
+If there's no cycle, the fast pointer hits `NULL` and we're done — no cycle. If there *is* a cycle, both pointers enter the loop. Once inside, the fast pointer gains one node on the slow pointer per step. Eventually the gap closes and they collide.
+
+Why must they collide? Think about it: once both are inside the cycle, the fast pointer is reducing the distance to the slow pointer by 1 each iteration. If fast is 5 nodes behind slow (within the cycle), it becomes 4, then 3, then 2, then 1, then 0 — collision. They can't skip past each other because the distance decreases by exactly 1.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int d) {
+    Node *n = malloc(sizeof(Node));
+    n->data = d;
+    n->next = NULL;
+    return n;
+}
+
+int has_cycle(Node *head) {
+    Node *slow = head;
+    Node *fast = head;
+
+    while (fast != NULL && fast->next != NULL) {
+        slow = slow->next;
+        fast = fast->next->next;
+        if (slow == fast) return 1;  // cycle detected
+    }
+    return 0;  // no cycle
+}
+
+int main() {
+    // Build: 1 -> 2 -> 3 -> 4 -> 5
+    Node *n1 = create_node(1);
+    Node *n2 = create_node(2);
+    Node *n3 = create_node(3);
+    Node *n4 = create_node(4);
+    Node *n5 = create_node(5);
+    n1->next = n2; n2->next = n3;
+    n3->next = n4; n4->next = n5;
+
+    printf("No cycle: %s\\n", has_cycle(n1) ? "yes" : "no");
+
+    // Create a cycle: 5 -> 3
+    n5->next = n3;
+    printf("With cycle: %s\\n", has_cycle(n1) ? "yes" : "no");
+
+    // Break cycle before freeing
+    n5->next = NULL;
+    while (n1) { Node *t = n1; n1 = n1->next; free(t); }
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="tip">
+Floyd's cycle detection (the "tortoise and hare" algorithm) uses O(1) extra space. It works because in a cycle, the fast pointer will eventually lap the slow pointer — just like a faster runner on a circular track.
+</Callout>
+
+Notice the loop condition: `fast != NULL && fast->next != NULL`. We check both because `fast` jumps two nodes at a time. If `fast` is `NULL`, we've reached the end (no cycle). If `fast->next` is `NULL`, the next double-step would dereference `NULL`. Either way, no cycle exists.
+
+## Merge Two Sorted Lists
+
+Given two sorted linked lists, combine them into one sorted list. This is the linked list version of the "merge" step in merge sort.
+
+**The zipper analogy**: Imagine two sorted stacks of cards, face up. You look at the top card of each stack, take the smaller one, and place it on your result pile. Repeat until both stacks are empty. You're "zipping" the two sequences together, always picking the smallest available element.
+
+The code uses a clever technique: a **dummy node** on the stack. Instead of handling "what if the merged list is empty?" as a special case, the dummy node serves as a fake beginning. We build the merged list by appending to `tail`, and at the end, `dummy.next` is the real head. The dummy never gets returned — it's just scaffolding.
+
+When one list runs out, we simply attach the remainder of the other list. Since both input lists are already sorted, the remaining nodes are guaranteed to be >= everything already in the merged list.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int d) {
+    Node *n = malloc(sizeof(Node));
+    n->data = d;
+    n->next = NULL;
+    return n;
+}
+
+Node *merge_sorted(Node *a, Node *b) {
+    // Dummy head simplifies the logic
+    Node dummy = {0, NULL};
+    Node *tail = &dummy;
+
+    while (a != NULL && b != NULL) {
+        if (a->data <= b->data) {
+            tail->next = a;
+            a = a->next;
+        } else {
+            tail->next = b;
+            b = b->next;
+        }
+        tail = tail->next;
+    }
+    // Attach remaining nodes
+    tail->next = (a != NULL) ? a : b;
+    return dummy.next;
+}
+
+void print_list(Node *h) {
+    while (h) { printf("%d ", h->data); h = h->next; }
+    printf("\\n");
+}
+void free_list(Node *h) {
+    while (h) { Node *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    // List A: 1 -> 3 -> 5
+    Node *a = create_node(1);
+    a->next = create_node(3);
+    a->next->next = create_node(5);
+
+    // List B: 2 -> 4 -> 6
+    Node *b = create_node(2);
+    b->next = create_node(4);
+    b->next->next = create_node(6);
+
+    Node *merged = merge_sorted(a, b);
+    printf("Merged: ");
+    print_list(merged);
+
+    free_list(merged);
+    return 0;
+}
+`} time="O(n+m)" space="O(1)" />
+
+The space complexity is O(1) because we're not creating new nodes — we're re-linking the existing ones. The nodes from lists A and B are just rearranged into a single chain. This is in-place merging.
+
+## Exercise: Reverse a List
+
+<Exercise
+  title="Reverse and print"
+  description="Read N, then N integers. Build a linked list, reverse it, then print the reversed list space-separated."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build list, reverse it, print
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "5 4 3 2 1\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "3\n10 20 30", expected_stdout: "30 20 10\n" }
+  ]}
+  hints={[
+    "Build the list using push_back to maintain input order.",
+    "Use three pointers: prev, curr, next.",
+    "After reversal, prev points to the new head."
+  ]}
+/>
+
+## Exercise: Find the Middle
+
+The slow/fast pointer technique isn't just for cycle detection. Here's another use: finding the middle of a list in one pass. Move `slow` one step and `fast` two steps. When `fast` reaches the end, `slow` is at the middle. It's like two hikers — one walks twice as fast. When the fast hiker reaches the destination, the slow hiker is halfway there.
+
+<Exercise
+  title="Middle element"
+  description="Read N, then N integers. Build a linked list. Print the middle element. For even-length lists, print the second middle element (e.g., for 4 elements, print the 3rd)."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build list
+    // Find and print the middle element
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 2 3 4 5", expected_stdout: "3\n" },
+    { stdin: "4\n1 2 3 4", expected_stdout: "3\n" },
+    { stdin: "1\n99", expected_stdout: "99\n" }
+  ]}
+  hints={[
+    "Use the slow/fast pointer technique.",
+    "slow moves 1 step, fast moves 2 steps.",
+    "When fast reaches the end, slow is at the middle."
+  ]}
+/>
+
+## Exercise: Merge Two Sorted Lists
+
+<Exercise
+  title="Merge sorted lists"
+  description="Read N1 then N1 sorted integers (list A). Read N2 then N2 sorted integers (list B). Merge them into one sorted list and print space-separated."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n1, n2;
+    scanf("%d", &n1);
+    // read n1 sorted integers into list A
+
+    scanf("%d", &n2);
+    // read n2 sorted integers into list B
+
+    // Merge and print
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 3 5\n3\n2 4 6", expected_stdout: "1 2 3 4 5 6\n" },
+    { stdin: "2\n1 2\n3\n3 4 5", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "0\n\n3\n10 20 30", expected_stdout: "10 20 30\n" }
+  ]}
+  hints={[
+    "Build both lists from input (push_back to keep sorted order).",
+    "Use a dummy node to simplify merge logic.",
+    "Compare heads of both lists, always take the smaller value.",
+    "After one list is exhausted, attach the remainder of the other."
+  ]}
+/>
+
+## Exercise: Remove Duplicates from Sorted List
+
+Since the list is sorted, duplicates are always adjacent — like identical cards stacked on top of each other. You only need to compare each node with the one right after it. If they match, skip the duplicate and free it. If they don't, advance to the next node.
+
+<Exercise
+  title="Remove duplicates"
+  description="Read N, then N sorted integers (may contain duplicates). Build a linked list and remove duplicate values so each value appears only once. Print the result."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build sorted list
+    // Remove duplicates
+    // Print result
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n1 1 2 3 3 3 4", expected_stdout: "1 2 3 4\n" },
+    { stdin: "5\n5 5 5 5 5", expected_stdout: "5\n" },
+    { stdin: "4\n1 2 3 4", expected_stdout: "1 2 3 4\n" }
+  ]}
+  hints={[
+    "Since the list is sorted, duplicates are always adjacent.",
+    "Walk through with curr. If curr->data == curr->next->data, skip curr->next.",
+    "Free the skipped nodes to avoid leaks."
+  ]}
+/>
+
+## What's Next
+
+With linked lists mastered, we'll move to more abstract data structures built on top of them: **stacks, queues, and trees**.

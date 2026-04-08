@@ -1,0 +1,320 @@
+---
+title: "Binary Files"
+module: "File I/O"
+order: 3
+description: "Reading and writing raw binary data — fread, fwrite, struct serialization, and file seeking."
+difficulty: "advanced"
+---
+
+Everything we've done so far has been **text I/O**: reading and writing human-readable characters. When you `fprintf(fp, "%d", 12345)`, the number 12345 gets written as the five ASCII characters `'1'`, `'2'`, `'3'`, `'4'`, `'5'` — five bytes. Open the file in a text editor, and you see "12345".
+
+But the integer 12345 in memory is a 4-byte `int`: `0x00003039`. Why write five bytes of ASCII when the computer already has a perfectly good 4-byte representation? For some kinds of data — large numeric datasets, image pixels, audio samples, game save files — converting to text and back is wasteful, slow, and lossy. That's why binary files exist.
+
+## Why Binary Files?
+
+Three reasons to store data as raw bytes instead of text:
+
+**Speed and size.** The integer 1000000000 takes 10 bytes as ASCII text but only 4 bytes as a binary `int`. For a file with a million integers, that's 10MB of text vs 4MB of binary. The conversion time (sprintf/sscanf) also adds up.
+
+**Precision.** Floating-point numbers lose precision when you convert them to text. The `double` value `0.1` has an exact 8-byte binary representation, but writing it as text (even `"0.10000000000000001"`) truncates the precision. Binary preserves the exact bits.
+
+**Structured data.** If you have a struct with three fields, writing it as binary means you can read one struct at a time, jumping directly to the Nth record with a simple offset calculation. No parsing, no delimiters, no edge cases.
+
+The tradeoff is that binary files are **not human-readable**. Open one in a text editor and you'll see garbage. You also can't easily diff or version-control them. For configuration files, logs, and anything humans might inspect, text is better. For databases, multimedia, and performance-critical data, binary wins.
+
+## fwrite and fread — memcpy for Disk
+
+The mental model for `fwrite` is simple: **it's memcpy from RAM to disk.** You give it a pointer to some memory, tell it how many bytes to write, and it copies those exact bytes to the file. No conversion, no formatting, no interpretation — just raw bytes.
+
+`fread` is the reverse: memcpy from disk back to RAM.
+
+The function signatures both follow the same pattern: `(pointer, size_of_one_item, number_of_items, file)`. The total bytes transferred is `size * count`.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Write integers in binary
+    int numbers[] = {100, 200, 300, 400, 500};
+    FILE *fp = fopen("numbers.bin", "wb");
+    if (!fp) { perror("open"); return 1; }
+
+    fwrite(numbers, sizeof(int), 5, fp);
+    fclose(fp);
+
+    // Read them back
+    int buffer[5];
+    fp = fopen("numbers.bin", "rb");
+    if (!fp) { perror("open"); return 1; }
+
+    size_t count = fread(buffer, sizeof(int), 5, fp);
+    fclose(fp);
+
+    printf("Read %zu integers: ", count);
+    for (size_t i = 0; i < count; i++) {
+        printf("%d ", buffer[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+<Callout type="info">
+`fwrite(ptr, size, count, fp)` writes `count` items of `size` bytes each. `fread` works the same way for reading. Both return the number of items actually written/read — always check this to detect partial reads or disk-full conditions.
+</Callout>
+
+Notice the `"wb"` and `"rb"` modes — the `b` is critical. Without it (on Windows), the C library may translate certain byte values, corrupting your data. On Unix, binary and text mode are identical, but always use `"b"` for binary files anyway — it documents your intent and keeps the code portable.
+
+## Why sizeof Matters
+
+When you call `fwrite(numbers, sizeof(int), 5, fp)`, why not just write `fwrite(numbers, 4, 5, fp)`? Because `sizeof(int)` isn't *always* 4. On some embedded systems it's 2 bytes. On some exotic architectures it might be 8. Using `sizeof` means your code adapts automatically to whatever platform it's compiled on.
+
+This also matters for `fread`: if you write with `sizeof(int)` on a 32-bit system (4 bytes per int) and try to read the file on a 64-bit system where `int` happens to be 8 bytes, your data will be garbled. This is part of the **portability problem** with binary files.
+
+## Saving Structs to Disk
+
+The most common use of binary I/O: writing entire structs in one shot. Because a struct is just a contiguous block of memory (with possible padding), you can `fwrite` the whole thing at once — no need to serialize each field individually.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+typedef struct {
+    char name[32];
+    int age;
+    float gpa;
+} Student;
+
+int main() {
+    // Write structs
+    Student students[] = {
+        {"Alice", 20, 3.8},
+        {"Bob", 22, 3.5},
+        {"Charlie", 21, 3.9}
+    };
+
+    FILE *fp = fopen("students.dat", "wb");
+    fwrite(students, sizeof(Student), 3, fp);
+    fclose(fp);
+
+    // Read them back
+    Student loaded[3];
+    fp = fopen("students.dat", "rb");
+    size_t n = fread(loaded, sizeof(Student), 3, fp);
+    fclose(fp);
+
+    for (size_t i = 0; i < n; i++) {
+        printf("%-10s age=%d gpa=%.1f\\n",
+               loaded[i].name, loaded[i].age, loaded[i].gpa);
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+<Callout type="warning">
+Binary struct files are **not portable** across different architectures. Struct padding, endianness, and type sizes may differ. For portable data, use text formats or explicitly handle byte ordering.
+</Callout>
+
+## The Endianness Problem
+
+Here's a subtle issue that catches people. The integer `0x01020304` is stored differently on different processors:
+
+- **Little-endian** (x86, ARM): bytes stored as `04 03 02 01` (least significant byte first)
+- **Big-endian** (some older PowerPC, network protocols): bytes stored as `01 02 03 04`
+
+If you `fwrite` an int on a little-endian machine and `fread` it on a big-endian machine, you'll get a completely wrong value. The bytes are the same, but they're interpreted backward.
+
+For files that never leave one machine (temp files, caches, game saves on one platform), this doesn't matter. For files shared across systems (network protocols, file formats like PNG or WAV), you need to pick an endianness and convert explicitly. Network protocols use big-endian ("network byte order") by convention, which is why functions like `htonl()` (host to network long) exist.
+
+## File Seeking: fseek and ftell
+
+Text files are read sequentially, start to finish. Binary files unlock **random access** — you can jump to any byte offset and read or write there. This is because every record has a fixed, predictable size. The 100th student record starts at byte `99 * sizeof(Student)`. No scanning, no counting newlines.
+
+`fseek(fp, offset, origin)` moves the file position indicator. `ftell(fp)` returns the current position in bytes.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    // Create a file with 10 integers
+    FILE *fp = fopen("random_access.bin", "wb");
+    for (int i = 0; i < 10; i++) {
+        int val = (i + 1) * 100;
+        fwrite(&val, sizeof(int), 1, fp);
+    }
+    fclose(fp);
+
+    // Random access: read the 5th integer (index 4)
+    fp = fopen("random_access.bin", "rb");
+
+    // Seek to position: index * sizeof(int) bytes from start
+    fseek(fp, 4 * sizeof(int), SEEK_SET);
+
+    int value;
+    fread(&value, sizeof(int), 1, fp);
+    printf("Element at index 4: %d\\n", value);
+
+    // Current position
+    long pos = ftell(fp);
+    printf("Current position: %ld bytes\\n", pos);
+
+    // Seek to end to get file size
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    printf("File size: %ld bytes (%ld ints)\\n", size, size / (long)sizeof(int));
+
+    fclose(fp);
+    return 0;
+}
+`} time="O(1) per seek" space="O(1)" />
+
+## fseek Origins
+
+The third argument to `fseek` controls *where* the offset is measured from:
+
+| Origin | Meaning | Typical use |
+|--------|---------|-------------|
+| `SEEK_SET` | From the beginning of file | Jump to the Nth record |
+| `SEEK_CUR` | From current position | Skip forward/backward N records |
+| `SEEK_END` | From end of file | Find file size, read last record |
+
+The combination `fseek(fp, 0, SEEK_END)` + `ftell(fp)` is the standard idiom for getting a file's size in bytes.
+
+## Updating Records In-Place
+
+Because binary records have fixed sizes, you can **modify a single record** without rewriting the entire file. Seek to the record's position, read it, change it, seek back, write it. This is how simple databases work.
+
+<Editor defaultCode={`#include <stdio.h>
+
+typedef struct {
+    char name[20];
+    int score;
+} Record;
+
+int main() {
+    // Create records
+    Record records[] = {
+        {"Alice", 90}, {"Bob", 85}, {"Charlie", 92}
+    };
+
+    FILE *fp = fopen("records.dat", "wb");
+    fwrite(records, sizeof(Record), 3, fp);
+    fclose(fp);
+
+    // Update Bob's score (record index 1)
+    fp = fopen("records.dat", "r+b");  // read+write binary
+    fseek(fp, 1 * sizeof(Record), SEEK_SET);
+
+    Record bob;
+    fread(&bob, sizeof(Record), 1, fp);
+    printf("Before: %s = %d\\n", bob.name, bob.score);
+
+    bob.score = 95;
+
+    // Seek back to Bob's position and overwrite
+    fseek(fp, 1 * sizeof(Record), SEEK_SET);
+    fwrite(&bob, sizeof(Record), 1, fp);
+    fclose(fp);
+
+    // Verify
+    fp = fopen("records.dat", "rb");
+    Record all[3];
+    fread(all, sizeof(Record), 3, fp);
+    fclose(fp);
+
+    for (int i = 0; i < 3; i++) {
+        printf("%s: %d\\n", all[i].name, all[i].score);
+    }
+
+    return 0;
+}
+`} time="O(1) per update" space="O(1)" />
+
+## When to Use Binary vs Text
+
+| | Text files | Binary files |
+|--|-----------|-------------|
+| **Human-readable** | Yes | No |
+| **Editable by hand** | Yes | No |
+| **Portable across systems** | Yes | Depends on format |
+| **Compact** | No (numbers are verbose) | Yes |
+| **Fast to read/write** | Slower (parsing/formatting) | Faster (raw memcpy) |
+| **Random access** | Difficult (variable-length lines) | Easy (fixed-size records) |
+
+**Rule of thumb**: Use text for anything humans might read, edit, or diff (config files, logs, data exchange). Use binary for anything performance-critical, large, or needing random access (databases, multimedia, caches).
+
+## Exercise: Simulate Binary Read
+
+<Exercise
+  title="Array as binary data"
+  description="Read N integers and an index K. Print the K-th element (0-indexed). This simulates random access in a binary file — directly jumping to position K."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    int k;
+    scanf("%d", &k);
+
+    printf("%d\\n", arr[k]);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n100 200 300 400 500\n3", expected_stdout: "400\n" },
+    { stdin: "3\n10 20 30\n0", expected_stdout: "10\n" },
+    { stdin: "4\n-1 -2 -3 -4\n2", expected_stdout: "-3\n" }
+  ]}
+  hints={[
+    "Array random access is analogous to fseek + fread.",
+    "Just print arr[k]."
+  ]}
+/>
+
+## Exercise: Struct Serialization
+
+<Exercise
+  title="Print structured records"
+  description="Read N, then N records. Each record has a name (string, no spaces) and an integer score on the same line. Print each record formatted as 'name: score'."
+  starterCode={`#include <stdio.h>
+
+typedef struct {
+    char name[50];
+    int score;
+} Record;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    Record records[100];
+    for (int i = 0; i < n; i++) {
+        scanf("%49s %d", records[i].name, &records[i].score);
+    }
+
+    for (int i = 0; i < n; i++) {
+        printf("%s: %d\\n", records[i].name, records[i].score);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nAlice 90\nBob 85\nCharlie 92", expected_stdout: "Alice: 90\nBob: 85\nCharlie: 92\n" },
+    { stdin: "1\nTest 100", expected_stdout: "Test: 100\n" },
+    { stdin: "2\nX 0\nY -5", expected_stdout: "X: 0\nY: -5\n" }
+  ]}
+  hints={[
+    "Read name and score using scanf with %s %d.",
+    "Print with printf(\"%s: %d\\n\", ...)."
+  ]}
+/>
+
+## What's Next
+
+The final piece: **error handling** — checking for failures and handling them gracefully.

@@ -1,0 +1,459 @@
+---
+title: "Advanced DP Patterns"
+module: "dynamic-programming"
+order: 3
+description: "Tackle advanced DP problems: longest increasing subsequence, edit distance, Kadane's algorithm, and grid DP."
+difficulty: "advanced"
+---
+
+# Advanced DP Patterns
+
+By now, you've seen 1D DP (coin change), 2D sequence DP (LCS), and the take-or-skip
+pattern (knapsack). Each new DP problem you encounter will stretch your thinking
+in a different direction. This lesson covers four more patterns — each one is a
+building block you'll see referenced over and over.
+
+## Longest Increasing Subsequence (LIS)
+
+**Problem:** Find the length of the longest strictly increasing subsequence in an array.
+
+Example: `[10, 9, 2, 5, 3, 7, 101, 18]` → LIS is `[2, 3, 7, 101]` or `[2, 5, 7, 101]`
+or `[2, 5, 7, 18]`, all of length 4.
+
+### Thinking Through It
+
+The brute force is to generate all subsequences and check which are increasing — that's
+$O(2^n)$ subsequences. We need DP.
+
+The key question for any DP problem is: **what's the state?** What information do I
+need to decide my next step?
+
+Suppose I'm building an increasing subsequence and I'm considering whether to include
+element `arr[i]`. I can include it only if it's larger than the last element I picked.
+So I need to know: *what was the last element I picked?*
+
+One approach: define `dp[i]` = the length of the longest increasing subsequence that
+**ends at index `i`**. The "ends at" constraint is the key insight — it anchors our
+state to something concrete.
+
+How do I compute `dp[i]`? I look at every element before `i`. If `arr[j] < arr[i]`
+(so `arr[i]` can extend the subsequence ending at `j`), then `dp[i]` could be
+`dp[j] + 1`. I take the best:
+
+> `dp[i] = max(dp[j] + 1)` for all `j < i` where `arr[j] < arr[i]`
+
+If no earlier element is smaller, `dp[i] = 1` (the element alone).
+
+<Editor defaultCode={`#include <stdio.h>
+
+int lis(int arr[], int n) {
+    int dp[n];
+    int max_len = 1;
+
+    for (int i = 0; i < n; i++) {
+        dp[i] = 1;  // Every element is a subsequence of length 1
+        for (int j = 0; j < i; j++) {
+            if (arr[j] < arr[i] && dp[j] + 1 > dp[i]) {
+                dp[i] = dp[j] + 1;
+            }
+        }
+        if (dp[i] > max_len) {
+            max_len = dp[i];
+        }
+    }
+
+    // Print the dp array to see the structure
+    printf("arr: ");
+    for (int i = 0; i < n; i++) printf("%3d", arr[i]);
+    printf("\\n dp: ");
+    for (int i = 0; i < n; i++) printf("%3d", dp[i]);
+    printf("\\n\\nLIS length: %d\\n", max_len);
+
+    return max_len;
+}
+
+int main(void) {
+    int arr[] = {10, 9, 2, 5, 3, 7, 101, 18};
+    lis(arr, 8);
+    return 0;
+}
+`} />
+
+<Complexity time="O(n²)" space="O(n)" />
+
+Study the `dp` array in the output. `dp[5]=3` because index 5 (value 7) can extend
+the subsequence `[2, 5]` (ending at index 3) OR `[2, 3]` (ending at index 4) — both
+give length 3.
+
+<Callout type="tip">
+There exists an $O(n \log n)$ algorithm using binary search with a "tails" array.
+The idea: maintain an array where `tails[i]` is the smallest possible tail element
+for an increasing subsequence of length `i+1`. For each new element, binary search
+for its position. This is worth studying once you're comfortable with the $O(n^2)$ version.
+</Callout>
+
+## Edit Distance: The Power of Three Choices
+
+**Problem:** Find the minimum number of single-character operations (insert, delete,
+replace) to transform one string into another.
+
+This problem is beautiful because it makes you think about what it means to *align*
+two strings.
+
+### Deriving the Recurrence
+
+Compare the last characters of `s1[0..i-1]` and `s2[0..j-1]`:
+
+**If `s1[i-1] == s2[j-1]`:** Great, they already match. The edit distance is just
+the distance between `s1[0..i-2]` and `s2[0..j-2]`. No operation needed.
+
+**If they don't match:** We have three options, and we don't know which is cheapest,
+so we try all three:
+
+1. **Replace** `s1[i-1]` with `s2[j-1]` — now they match, and we solve for
+   `s1[0..i-2]` vs `s2[0..j-2]`. Cost: 1 + `dp[i-1][j-1]`.
+2. **Delete** `s1[i-1]` — we lose the last character of s1 and try to match the
+   rest of s1 against all of s2. Cost: 1 + `dp[i-1][j]`.
+3. **Insert** a character at the end of s1 to match `s2[j-1]` — now s2's last
+   character is handled, and we solve for `s1[0..i-1]` vs `s2[0..j-2]`.
+   Cost: 1 + `dp[i][j-1]`.
+
+Take the minimum.
+
+The base cases are revealing: transforming a string of length `i` into an empty string
+costs `i` deletions. Transforming an empty string into one of length `j` costs `j`
+insertions. That's the border of the DP table.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+int min3(int a, int b, int c) {
+    int m = a < b ? a : b;
+    return m < c ? m : c;
+}
+
+int edit_distance(const char *s1, const char *s2) {
+    int m = strlen(s1);
+    int n = strlen(s2);
+    int dp[m + 1][n + 1];
+
+    // Base cases
+    for (int i = 0; i <= m; i++) dp[i][0] = i;  // delete all of s1
+    for (int j = 0; j <= n; j++) dp[0][j] = j;  // insert all of s2
+
+    for (int i = 1; i <= m; i++) {
+        for (int j = 1; j <= n; j++) {
+            if (s1[i - 1] == s2[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1];  // characters match, free
+            } else {
+                dp[i][j] = 1 + min3(
+                    dp[i - 1][j - 1],  // replace
+                    dp[i - 1][j],       // delete from s1
+                    dp[i][j - 1]        // insert into s1
+                );
+            }
+        }
+    }
+
+    // Print the table
+    printf("      ");
+    for (int j = 0; j < n; j++) printf("  %c", s2[j]);
+    printf("\\n");
+    for (int i = 0; i <= m; i++) {
+        if (i > 0) printf("  %c ", s1[i - 1]);
+        else printf("    ");
+        for (int j = 0; j <= n; j++)
+            printf("%2d ", dp[i][j]);
+        printf("\\n");
+    }
+    printf("\\nEdit distance: %d\\n", dp[m][n]);
+    return dp[m][n];
+}
+
+int main(void) {
+    edit_distance("kitten", "sitting");
+    return 0;
+}
+`} />
+
+<Complexity time="O(m × n)" space="O(m × n)" />
+
+"kitten" → "sitting" requires 3 operations: replace k→s, replace e→i, insert g.
+Trace through the table to verify. Each cell's value is the cheapest way to align
+the first `i` chars of "kitten" with the first `j` chars of "sitting."
+
+<Callout type="info">
+Edit distance (Levenshtein distance) powers spell checkers, DNA sequence alignment,
+diff tools, and fuzzy search. It's one of the most practically useful DP algorithms.
+When your phone suggests "did you mean...?" — that's edit distance at work.
+</Callout>
+
+## Maximum Subarray Sum: Kadane's Algorithm
+
+**Problem:** Find the contiguous subarray with the largest sum.
+
+This one is tricky because it doesn't *look* like DP at first. The brute force is
+to try all $O(n^2)$ subarrays and compute each sum. But there's a beautiful linear
+solution.
+
+### The Key Question
+
+Define `dp[i]` = maximum subarray sum that **ends at index `i`** (must include `arr[i]`).
+
+At each position `i`, you face a simple decision: should I **extend** the subarray
+that ended at `i-1`, or **start fresh** at `i`?
+
+- Extend: `dp[i-1] + arr[i]` (add this element to the running sum)
+- Start fresh: `arr[i]` (the running sum was dragging us down, start over)
+
+Which is better? Whichever is larger: `dp[i] = max(arr[i], dp[i-1] + arr[i])`.
+
+That's equivalent to asking: "is `dp[i-1]` positive?" If the previous best sum is
+negative, extending it makes things worse — start fresh.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int max_subarray(int arr[], int n) {
+    int max_ending_here = arr[0];  // best sum ending at current position
+    int max_so_far = arr[0];       // best sum seen anywhere
+
+    printf("i=0: arr=%3d  ending_here=%3d  max_so_far=%3d\\n",
+           arr[0], max_ending_here, max_so_far);
+
+    for (int i = 1; i < n; i++) {
+        // Should I extend or start fresh?
+        if (max_ending_here + arr[i] > arr[i]) {
+            max_ending_here = max_ending_here + arr[i];  // extend
+        } else {
+            max_ending_here = arr[i];  // start fresh
+        }
+
+        if (max_ending_here > max_so_far) {
+            max_so_far = max_ending_here;
+        }
+
+        printf("i=%d: arr=%3d  ending_here=%3d  max_so_far=%3d%s\\n",
+               i, arr[i], max_ending_here, max_so_far,
+               max_ending_here == arr[i] ? "  [restart]" : "");
+    }
+    return max_so_far;
+}
+
+int main(void) {
+    int arr[] = {-2, 1, -3, 4, -1, 2, 1, -5, 4};
+    int n = 9;
+
+    printf("Array: ");
+    for (int i = 0; i < n; i++) printf("%d ", arr[i]);
+    printf("\\n\\n");
+
+    int result = max_subarray(arr, n);
+    printf("\\nMaximum subarray sum: %d\\n", result);
+    printf("(subarray: [4, -1, 2, 1] = 6)\\n");
+    return 0;
+}
+`} />
+
+<Complexity time="O(n)" space="O(1)" />
+
+Watch the trace carefully. The algorithm restarts at index 3 (value 4) because the
+running sum from `(-2 + 1 + -3) = -4` is negative — starting fresh at 4 is better.
+Then it builds up `4 + (-1) + 2 + 1 = 6` before hitting -5, which drags it below the
+restart threshold.
+
+<Callout type="info">
+Kadane's algorithm is remarkable: it reduces a problem that seems to require
+considering $O(n^2)$ subarrays into a single pass. The insight is that you never need
+to look back — the decision to extend or restart depends only on whether your
+accumulated sum is helping or hurting.
+</Callout>
+
+## Grid DP: Unique Paths
+
+DP on a grid is visually intuitive and a great way to build geometric reasoning.
+
+**Problem:** Count the number of paths from the top-left to the bottom-right of an
+m×n grid, moving only right or down.
+
+### Building Intuition
+
+To reach cell `(i, j)`, you must have come from either `(i-1, j)` (moved down) or
+`(i, j-1)` (moved right). So the number of paths to `(i, j)` is the sum of paths
+to those two cells:
+
+> `dp[i][j] = dp[i-1][j] + dp[i][j-1]`
+
+The first row and first column are all 1s — there's only one way to reach them (go
+straight right or straight down).
+
+<Editor defaultCode={`#include <stdio.h>
+
+int unique_paths(int m, int n) {
+    int dp[m][n];
+
+    for (int i = 0; i < m; i++) dp[i][0] = 1;
+    for (int j = 0; j < n; j++) dp[0][j] = 1;
+
+    for (int i = 1; i < m; i++) {
+        for (int j = 1; j < n; j++) {
+            dp[i][j] = dp[i - 1][j] + dp[i][j - 1];
+        }
+    }
+
+    // Print the grid
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("%4d", dp[i][j]);
+        }
+        printf("\\n");
+    }
+    printf("\\nTotal paths: %d\\n", dp[m - 1][n - 1]);
+    return dp[m - 1][n - 1];
+}
+
+int main(void) {
+    printf("3x7 grid:\\n");
+    unique_paths(3, 7);
+    return 0;
+}
+`} />
+
+<Complexity time="O(m × n)" space="O(m × n)" />
+
+Look at the printed grid — it's Pascal's triangle tilted sideways! That's not a
+coincidence: the number of paths through an m×n grid equals the binomial
+coefficient C(m+n-2, m-1). DP gives us the same answer through a different lens.
+
+## Grid DP: Minimum Path Sum
+
+Now each cell has a cost, and we want the cheapest path:
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main(void) {
+    int m = 3, n = 3;
+    int grid[3][3] = {
+        {1, 3, 1},
+        {1, 5, 1},
+        {4, 2, 1}
+    };
+
+    int dp[3][3];
+    dp[0][0] = grid[0][0];
+
+    // First row: can only come from the left
+    for (int j = 1; j < n; j++)
+        dp[0][j] = dp[0][j - 1] + grid[0][j];
+
+    // First column: can only come from above
+    for (int i = 1; i < m; i++)
+        dp[i][0] = dp[i - 1][0] + grid[i][0];
+
+    // Rest: min of coming from above or from the left
+    for (int i = 1; i < m; i++) {
+        for (int j = 1; j < n; j++) {
+            int from_up = dp[i - 1][j];
+            int from_left = dp[i][j - 1];
+            dp[i][j] = grid[i][j] + (from_up < from_left ? from_up : from_left);
+        }
+    }
+
+    printf("Grid:        Min cost to reach:\\n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) printf("%2d ", grid[i][j]);
+        printf("    ");
+        for (int j = 0; j < n; j++) printf("%2d ", dp[i][j]);
+        printf("\\n");
+    }
+    printf("\\nMinimum path sum: %d\\n", dp[m-1][n-1]);
+    printf("Path: 1 -> 3 -> 1 -> 1 -> 1 = 7\\n");
+
+    return 0;
+}
+`} />
+
+<Complexity time="O(m × n)" space="O(m × n)" />
+
+The minimum cost path goes `1→3→1→1→1 = 7`, not `1→1→4→2→1 = 9`. The DP table shows
+the cheapest cost to reach each cell, building up from the top-left corner.
+
+## Recognizing DP Problems
+
+After working through these examples, here's what to look for:
+
+1. **"How many ways..."** or **"Find the minimum/maximum..."** — optimization and
+   counting are the two classic DP signals.
+2. **Choices at each step** — if you face a decision (take/skip, go left/right,
+   use this coin or that one), and the choice affects future options, think DP.
+3. **The same subproblem appears multiple times** — if you can define a state, and
+   different paths of choices lead to the same state, memoization will help.
+4. **Greedy doesn't work** — if the locally optimal choice isn't globally optimal
+   (like coin change with arbitrary denominations), DP is usually the answer.
+
+## Exercise: House Robber
+
+<Exercise
+  title="House Robber"
+  description="You're a robber planning to rob houses along a street. Each house has a certain amount of money. You cannot rob two adjacent houses (alarm triggers). Find the maximum amount you can rob. Read n, then n values. Print the maximum."
+  starterCode={`#include <stdio.h>
+
+int main(void) {
+    int n;
+    scanf("%d", &n);
+
+    int houses[n];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &houses[i]);
+    }
+
+    // Your DP solution here
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n1 2 3 1", expected_stdout: "4\n" },
+    { stdin: "5\n2 7 9 3 1", expected_stdout: "12\n" },
+    { stdin: "1\n5", expected_stdout: "5\n" },
+    { stdin: "3\n100 1 100", expected_stdout: "200\n" }
+  ]}
+  hints={[
+    "dp[i] = max money robbing from house 0..i. At each house, choose: rob it (dp[i-2] + houses[i]) or skip it (dp[i-1]).",
+    "dp[i] = max(dp[i-1], dp[i-2] + houses[i]). Base: dp[0] = houses[0], dp[1] = max(houses[0], houses[1]).",
+    "You only need two variables: prev1 and prev2. Space O(1)."
+  ]}
+/>
+
+## Exercise: Unique Paths with Obstacles
+
+<Exercise
+  title="Unique Paths with Obstacles"
+  description="Count paths from top-left to bottom-right in an m×n grid, moving only right or down. Some cells contain obstacles (1 = obstacle, 0 = free). Read m, n, then the grid. Print the number of paths."
+  starterCode={`#include <stdio.h>
+
+int main(void) {
+    int m, n;
+    scanf("%d %d", &m, &n);
+
+    int grid[m][n];
+    for (int i = 0; i < m; i++)
+        for (int j = 0; j < n; j++)
+            scanf("%d", &grid[i][j]);
+
+    // Your DP solution here
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3 3\n0 0 0\n0 1 0\n0 0 0", expected_stdout: "2\n" },
+    { stdin: "2 2\n0 0\n0 0", expected_stdout: "2\n" },
+    { stdin: "2 2\n0 1\n1 0", expected_stdout: "0\n" },
+    { stdin: "1 1\n0", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "If grid[i][j] == 1, then dp[i][j] = 0 (no paths through an obstacle).",
+    "Initialize dp[0][0] = 1 if not an obstacle. First row/column: dp[i][j] = dp[prev] if no obstacle, else 0.",
+    "For the rest: dp[i][j] = grid[i][j] == 1 ? 0 : dp[i-1][j] + dp[i][j-1]."
+  ]}
+/>

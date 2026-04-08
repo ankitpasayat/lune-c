@@ -1,0 +1,292 @@
+---
+title: "Fixed-Width Types"
+module: "Embedded & Constrained C"
+order: 2
+description: "Use stdint.h for exact-width types, ensure portability, and understand type sizes across platforms."
+difficulty: "advanced"
+---
+
+Here's a question most C tutorials skip: **how big is an `int`?** The honest answer is "it depends." On your desktop, it's almost certainly 4 bytes. On a 16-bit microcontroller like the MSP430, it's 2 bytes. On some DSP architectures, it might be something else entirely.
+
+C deliberately leaves the sizes of `int`, `long`, and `short` up to the platform. This was a brilliantly practical decision in 1972 — it let C run efficiently on wildly different hardware by using each CPU's natural word size. But it creates a serious problem: code that works perfectly on your development machine can produce wrong results, buffer overflows, or protocol violations when compiled for a different target.
+
+## Why Variable Sizes Matter
+
+Consider a network protocol that says "the message length is a 4-byte unsigned integer." If you write `unsigned int length;` and your code runs on a platform where `int` is 2 bytes, you can only represent lengths up to 65,535 instead of 4,294,967,295. Your program silently truncates large messages. Worse, if you write the struct to the network with `send(sock, &header, sizeof(header), 0)`, you send 2 bytes instead of 4, and the receiver reads garbage.
+
+The same problem appears in file formats, hardware register access, and any code that needs to agree with the outside world on the exact layout of data in memory.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <limits.h>
+
+int main() {
+    printf("=== Standard Type Sizes (this platform) ===\\n\\n");
+
+    printf("%-12s %zu bytes  [%d to %d]\\n",
+           "char", sizeof(char), CHAR_MIN, CHAR_MAX);
+    printf("%-12s %zu bytes  [%d to %d]\\n",
+           "short", sizeof(short), SHRT_MIN, SHRT_MAX);
+    printf("%-12s %zu bytes  [%d to %d]\\n",
+           "int", sizeof(int), INT_MIN, INT_MAX);
+    printf("%-12s %zu bytes  [%ld to %ld]\\n",
+           "long", sizeof(long), LONG_MIN, LONG_MAX);
+    printf("%-12s %zu bytes\\n",
+           "long long", sizeof(long long));
+    printf("%-12s %zu bytes\\n",
+           "void*", sizeof(void*));
+
+    printf("\\nThe problem:\\n");
+    printf("  - 'int' is 4 bytes on most desktops\\n");
+    printf("  - 'int' might be 2 bytes on 16-bit MCUs\\n");
+    printf("  - 'long' is 4 bytes on Windows, 8 on Linux\\n");
+    printf("  - Your code breaks when ported!\\n");
+
+    return 0;
+}
+`} />
+
+## stdint.h: The Solution
+
+C99 introduced `<stdint.h>`, which provides types with **guaranteed exact widths**. `uint32_t` is always exactly 32 bits, everywhere. `int8_t` is always exactly 8 bits. No ambiguity, no platform dependence.
+
+The naming convention is simple: `[u]int<N>_t` where `u` means unsigned and `N` is the bit count. Use these anywhere the size matters: protocol headers, file formats, hardware registers, and cross-platform data structures.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>  // C99 fixed-width types
+#include <inttypes.h> // Format macros for printing
+
+int main() {
+    printf("=== Fixed-Width Integer Types ===\\n\\n");
+
+    // Exact width: guaranteed to be exactly N bits
+    int8_t   a = 127;       // Exactly 8 bits, signed
+    uint8_t  b = 255;       // Exactly 8 bits, unsigned
+    int16_t  c = 32767;     // Exactly 16 bits, signed
+    uint16_t d = 65535;     // Exactly 16 bits, unsigned
+    int32_t  e = 2147483647;// Exactly 32 bits, signed
+    uint32_t f = 4294967295U;// Exactly 32 bits, unsigned
+    int64_t  g = INT64_MAX; // Exactly 64 bits, signed
+    uint64_t h = UINT64_MAX;// Exactly 64 bits, unsigned
+
+    printf("%-10s %3zu bytes  value: %" PRId8 "\\n", "int8_t", sizeof(a), a);
+    printf("%-10s %3zu bytes  value: %" PRIu8 "\\n", "uint8_t", sizeof(b), b);
+    printf("%-10s %3zu bytes  value: %" PRId16 "\\n", "int16_t", sizeof(c), c);
+    printf("%-10s %3zu bytes  value: %" PRIu16 "\\n", "uint16_t", sizeof(d), d);
+    printf("%-10s %3zu bytes  value: %" PRId32 "\\n", "int32_t", sizeof(e), e);
+    printf("%-10s %3zu bytes  value: %" PRIu32 "\\n", "uint32_t", sizeof(f), f);
+    printf("%-10s %3zu bytes  value: %" PRId64 "\\n", "int64_t", sizeof(g), g);
+    printf("%-10s %3zu bytes  value: %" PRIu64 "\\n", "uint64_t", sizeof(h), h);
+
+    printf("\\nAlways use these in:\\n");
+    printf("  - Network protocols (wire format)\\n");
+    printf("  - File formats (binary data)\\n");
+    printf("  - Hardware registers\\n");
+    printf("  - Cross-platform data structures\\n");
+
+    return 0;
+}
+`} />
+
+## When to Use What: The Decision Guide
+
+Not every variable needs a fixed-width type. Here's the mental model:
+
+- **`int`**: Use for general-purpose computation — loop counters, local calculations, function return values. The compiler picks the most efficient size for the platform, and that's what you want for speed.
+- **`uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`**: Use when the **exact size matters** — talking to hardware, sending data over a network, writing to a file, or defining a data structure that must have a specific layout.
+- **`size_t`**: Use for anything that represents a size in bytes or an array index. It's unsigned and matches the pointer width of the platform, so it can index the largest possible array. `strlen()` returns `size_t`, `malloc()` takes `size_t`, and `sizeof` evaluates to `size_t`.
+- **`int_fast32_t`** and friends: Use when you need *at least* N bits but want the CPU's fastest type at that width or larger. On a 64-bit machine, `int_fast16_t` might be 64 bits because 64-bit operations are the CPU's natural speed.
+
+## The fast and least Variants
+
+`<stdint.h>` provides two additional families beyond the exact-width types, each serving a different need:
+
+**`int_leastN_t`**: Guarantees at least N bits in the smallest possible type. Use this when you're optimizing for memory — perhaps you have an array of millions of elements and want the smallest type that holds your value range.
+
+**`int_fastN_t`**: Guarantees at least N bits in the fastest type the CPU can work with. On many architectures, operating on a 16-bit value requires an extra instruction to mask or sign-extend — an `int_fast16_t` avoids this by using a wider type when it's faster.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>
+
+int main() {
+    printf("=== Other stdint.h Types ===\\n\\n");
+
+    // Minimum width: at least N bits (might be wider)
+    int_least8_t  a = 0;
+    int_least16_t b = 0;
+    int_least32_t c = 0;
+    int_least64_t d = 0;
+
+    printf("Minimum width types (at least N bits):\\n");
+    printf("  int_least8_t:  %zu bytes\\n", sizeof(a));
+    printf("  int_least16_t: %zu bytes\\n", sizeof(b));
+    printf("  int_least32_t: %zu bytes\\n", sizeof(c));
+    printf("  int_least64_t: %zu bytes\\n", sizeof(d));
+
+    // Fast types: fastest type with at least N bits
+    int_fast8_t  e = 0;
+    int_fast16_t f = 0;
+    int_fast32_t g = 0;
+    int_fast64_t h = 0;
+
+    printf("\\nFast types (fastest with at least N bits):\\n");
+    printf("  int_fast8_t:  %zu bytes\\n", sizeof(e));
+    printf("  int_fast16_t: %zu bytes\\n", sizeof(f));
+    printf("  int_fast32_t: %zu bytes\\n", sizeof(g));
+    printf("  int_fast64_t: %zu bytes\\n", sizeof(h));
+
+    // Special types
+    printf("\\nSpecial types:\\n");
+    printf("  size_t:    %zu bytes (unsigned, for sizes)\\n", sizeof(size_t));
+    printf("  ptrdiff_t: %zu bytes (signed, pointer difference)\\n", sizeof(ptrdiff_t));
+    printf("  intptr_t:  %zu bytes (integer that holds a pointer)\\n", sizeof(intptr_t));
+    printf("  uintptr_t: %zu bytes (unsigned, holds a pointer)\\n", sizeof(uintptr_t));
+
+    (void)a; (void)b; (void)c; (void)d;
+    (void)e; (void)f; (void)g; (void)h;
+
+    return 0;
+}
+`} />
+
+## Byte Order (Endianness)
+
+When a multi-byte integer sits in memory, which byte comes first — the most significant or the least significant? This is called **endianness**, and it's one of those things that doesn't matter until it matters a lot.
+
+Your x86 desktop stores the least significant byte first (**little-endian**): the number `0x12345678` sits in memory as `78 56 34 12`. Network protocols, by convention, use big-endian (most significant byte first): `12 34 56 78`. If you send bytes from memory directly onto the network without converting, the receiver interprets `0x78563412` — a completely different number.
+
+This is the reason `htonl()`/`ntohl()` exist: they convert between host and network byte order. On a big-endian machine, they're no-ops. On a little-endian machine, they reverse the bytes. Always use them (or equivalent functions) when crossing byte-order boundaries.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+
+// Byte order matters for network protocols and file formats
+
+int is_little_endian(void) {
+    uint16_t x = 1;
+    return *(uint8_t*)&x == 1;
+}
+
+// Convert between host and network byte order
+uint16_t my_htons(uint16_t h) {
+    uint8_t bytes[2];
+    bytes[0] = (h >> 8) & 0xFF;  // High byte first (big-endian)
+    bytes[1] = h & 0xFF;
+    uint16_t result;
+    memcpy(&result, bytes, 2);
+    return result;
+}
+
+uint32_t my_htonl(uint32_t h) {
+    uint8_t bytes[4];
+    bytes[0] = (h >> 24) & 0xFF;
+    bytes[1] = (h >> 16) & 0xFF;
+    bytes[2] = (h >> 8) & 0xFF;
+    bytes[3] = h & 0xFF;
+    uint32_t result;
+    memcpy(&result, bytes, 4);
+    return result;
+}
+
+int main() {
+    printf("=== Byte Order (Endianness) ===\\n\\n");
+
+    printf("This system is: %s-endian\\n\\n",
+           is_little_endian() ? "little" : "big");
+
+    // Show how 0x12345678 is stored in memory
+    uint32_t val = 0x12345678;
+    uint8_t *bytes = (uint8_t*)&val;
+
+    printf("Value: 0x%08X\\n", val);
+    printf("Bytes in memory: ");
+    for (int i = 0; i < 4; i++) printf("%02X ", bytes[i]);
+    printf("\\n\\n");
+
+    printf("Little-endian: 78 56 34 12 (LSB first)\\n");
+    printf("Big-endian:    12 34 56 78 (MSB first)\\n\\n");
+
+    printf("Network byte order is big-endian.\\n");
+    printf("Use htons/htonl when sending, ntohs/ntohl when receiving.\\n");
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+When writing data to files or networks, always specify the byte order. Use `htonl`/`htons` (host to network) and `ntohl`/`ntohs` (network to host) from `<arpa/inet.h>`, or write your own byte-swapping functions for portability. The safest approach for serialization is to always shift-and-mask into a byte array — this is endian-neutral and works everywhere.
+</Callout>
+
+## Exercise: Pack/Unpack Bytes
+
+<Exercise
+  title="Byte packing"
+  description="Read 4 unsigned bytes (0-255). Pack them into a single 32-bit integer in big-endian order (first byte is most significant). Print the result as a decimal number."
+  starterCode={`#include <stdio.h>
+#include <stdint.h>
+
+int main() {
+    unsigned int b0, b1, b2, b3;
+    scanf("%u %u %u %u", &b0, &b1, &b2, &b3);
+
+    // Pack: b0 is MSB, b3 is LSB
+    uint32_t packed = ((uint32_t)b0 << 24) |
+                      ((uint32_t)b1 << 16) |
+                      ((uint32_t)b2 << 8)  |
+                      (uint32_t)b3;
+
+    printf("%u\\n", packed);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "192 168 1 1", expected_stdout: "3232235777\n" },
+    { stdin: "0 0 0 1", expected_stdout: "1\n" },
+    { stdin: "255 255 255 255", expected_stdout: "4294967295\n" },
+    { stdin: "10 0 0 0", expected_stdout: "167772160\n" }
+  ]}
+  hints={[
+    "Shift first byte left by 24, second by 16, third by 8, fourth by 0.",
+    "OR them together: (b0 << 24) | (b1 << 16) | (b2 << 8) | b3",
+    "Cast to uint32_t before shifting to avoid overflow."
+  ]}
+/>
+
+## Exercise: Unpack Bytes
+
+<Exercise
+  title="Byte unpacking"
+  description="Read a 32-bit unsigned integer. Unpack it into 4 bytes (big-endian order) and print them space-separated."
+  starterCode={`#include <stdio.h>
+#include <stdint.h>
+
+int main() {
+    uint32_t val;
+    scanf("%u", &val);
+
+    // Unpack: extract each byte
+    uint8_t b0 = (val >> 24) & 0xFF;
+    uint8_t b1 = (val >> 16) & 0xFF;
+    uint8_t b2 = (val >> 8) & 0xFF;
+    uint8_t b3 = val & 0xFF;
+
+    printf("%u %u %u %u\\n", b0, b1, b2, b3);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3232235777", expected_stdout: "192 168 1 1\n" },
+    { stdin: "1", expected_stdout: "0 0 0 1\n" },
+    { stdin: "4294967295", expected_stdout: "255 255 255 255\n" },
+    { stdin: "256", expected_stdout: "0 0 1 0\n" }
+  ]}
+  hints={[
+    "Shift right and mask with 0xFF to extract each byte.",
+    "b0 = (val >> 24) & 0xFF gives the most significant byte.",
+    "This is the reverse of the packing exercise."
+  ]}
+/>
+
+## What's Next
+
+Next: **Bare-metal concepts** — writing C without an operating system.

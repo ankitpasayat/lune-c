@@ -1,0 +1,384 @@
+---
+title: "Memory Layout"
+module: "Bitwise & Low-Level"
+order: 4
+description: "Stack, heap, data segments, and how a C program is organized in memory."
+difficulty: "intermediate"
+---
+
+When your C program runs, the operating system gives it a block of virtual memory. But that memory isn't one homogeneous blob — it's divided into distinct **segments**, each with a different purpose, different lifetime rules, and different protections. Understanding this layout is the difference between blindly following malloc/free rules and truly understanding *why* those rules exist.
+
+## The Apartment Building Analogy
+
+Think of your program's memory as a tall apartment building:
+
+- **Ground floor (Text segment)**: The building's blueprints and operating manuals. Posted behind glass — everyone can read them, but nobody can modify them. This is your compiled code.
+- **Second floor (Data/BSS segments)**: The building manager's office. Storage that exists for the entire lifetime of the building. Initialized data (Data) is like furniture that was there on move-in day; uninitialized data (BSS) is like empty rooms that the janitor zeroed out before you arrived.
+- **Upper floors (Heap)**: Apartments you rent on demand. You request one with `malloc`, and you get whatever's available. You must explicitly return it with `free` when you're done. If renters come and go in random order, some floors end up with empty apartments between occupied ones — this is **fragmentation**.
+- **The rooftop (Stack)**: A stack of dinner plates. Each function call places a new plate on top (a **stack frame**). When the function returns, its plate is removed. You can only access the top plate. If you stack too many plates, they topple off the edge — that's a **stack overflow**.
+
+```
+High Address
+┌──────────────────┐
+│      Stack       │ ← Local variables, function calls
+│        ↓         │   (grows downward)
+│                  │
+│        ↑         │
+│       Heap       │ ← malloc/calloc/realloc
+│                  │   (grows upward)
+├──────────────────┤
+│   BSS Segment    │ ← Uninitialized globals (zeroed)
+├──────────────────┤
+│   Data Segment   │ ← Initialized globals
+├──────────────────┤
+│   Text Segment   │ ← Program code (read-only)
+└──────────────────┘
+Low Address
+```
+
+## Why Separate Segments?
+
+Each segment exists for a specific engineering reason:
+
+**Text (code) is separate and read-only** because executable code should never be accidentally (or maliciously) overwritten. The OS marks these memory pages as execute-only, so a buffer overflow in your data can't inject executable shellcode into this region. Multiple instances of the same program can also *share* text pages, saving memory.
+
+**Data and BSS store globals** because their lifetime is the entire program. They're allocated once at program start and never freed. BSS is separate from Data because uninitialized globals are all zero — rather than storing millions of explicit zeros in the executable file, the loader just notes "allocate this much and zero it," saving disk space.
+
+**The stack exists for automatic LIFO allocation** because function calls naturally follow a last-in-first-out pattern: the most recently called function is always the first to return. This perfect nesting means a simple stack pointer that grows and shrinks is all you need — no complex allocation logic, no fragmentation, no manual cleanup.
+
+**The heap exists for flexible lifetimes** because not all data fits the stack's rigid LIFO discipline. Sometimes a function creates data that must outlive the function itself — a linked list node, a parsed data structure, a buffer that gets passed to another thread. The heap provides this flexibility at the cost of complexity: you must manage allocation and deallocation yourself, and the allocator must handle arbitrary alloc/free orderings.
+
+## Exploring the Segments
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+// Data segment: initialized globals
+int initialized_global = 42;
+
+// BSS segment: uninitialized globals (set to 0)
+int uninitialized_global;
+
+// Text/Data: string literal
+const char *message = "Hello";
+
+int main() {
+    // Stack: local variables
+    int local_var = 10;
+    int array[5] = {1, 2, 3, 4, 5};
+
+    // Heap: dynamically allocated
+    int *heap_var = malloc(sizeof(int));
+    *heap_var = 99;
+
+    printf("=== Memory Segments ===\\n\\n");
+
+    printf("Text (code):    main at %p\\n", (void*)main);
+    printf("Data (init):    initialized_global at %p = %d\\n",
+           (void*)&initialized_global, initialized_global);
+    printf("BSS (uninit):   uninitialized_global at %p = %d\\n",
+           (void*)&uninitialized_global, uninitialized_global);
+    printf("Heap:           heap_var at %p = %d\\n",
+           (void*)heap_var, *heap_var);
+    printf("Stack:          local_var at %p = %d\\n",
+           (void*)&local_var, local_var);
+    printf("Stack:          array at %p\\n", (void*)array);
+
+    free(heap_var);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="info">
+Notice that stack addresses are typically much higher than heap addresses, and global/static data lives in between. The exact addresses vary between runs (due to ASLR — Address Space Layout Randomization).
+</Callout>
+
+## The Stack: A Walkthrough of What Actually Happens
+
+The stack is the most important segment to understand deeply, because it underpins every function call, every local variable, and every return value.
+
+### What Goes Into a Stack Frame
+
+When you call a function, the CPU does several things in sequence:
+
+1. **Pushes the arguments** onto the stack (or passes them in registers — the calling convention decides)
+2. **Pushes the return address** — the location of the instruction to execute after the function returns
+3. **Saves the old base pointer** — so the calling function's frame can be restored
+4. **Sets up the new base pointer** — the anchor for the new function's local variables
+5. **Allocates space for locals** — by moving the stack pointer downward
+
+When the function returns, this process unwinds: local space is reclaimed, the old base pointer is restored, and execution jumps back to the return address. The stack pointer moves back up, and the frame simply ceases to exist.
+
+This is why local variables have **automatic lifetime** — they're automatically created when the function is entered and automatically destroyed when it returns. No `malloc`, no `free`. The stack pointer does all the bookkeeping.
+
+<Editor defaultCode={`#include <stdio.h>
+
+void func_c(void) {
+    int c = 3;
+    printf("func_c: c at %p\\n", (void*)&c);
+}
+
+void func_b(void) {
+    int b = 2;
+    printf("func_b: b at %p\\n", (void*)&b);
+    func_c();
+}
+
+void func_a(void) {
+    int a = 1;
+    printf("func_a: a at %p\\n", (void*)&a);
+    func_b();
+}
+
+int main() {
+    int m = 0;
+    printf("main:   m at %p\\n\\n", (void*)&m);
+    func_a();
+
+    printf("\\nStack grows downward (addresses decrease with deeper calls)\\n");
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Run this and compare the addresses. Each deeper call has a *lower* address — the stack is growing downward. When `func_c` returns, its frame vanishes, and `func_b`'s frame is at the top again.
+
+### Why Stack Overflow Happens
+
+The stack has a **fixed size** — typically 1 to 8 MB, set by the OS. Unlike the heap, it cannot grow dynamically. Every function call adds a frame, and every local variable lives on the stack.
+
+Stack overflow happens when you run out of stack space. The most common cause is **unbounded recursion**. Each recursive call adds a frame, and if the recursion doesn't terminate (or goes too deep before terminating), the stack collides with the memory below it. The OS detects this and kills your program with a segmentation fault.
+
+Large local arrays are another cause. A single `int big[1000000]` allocates ~4MB on the stack — potentially more than the entire stack size. Always allocate large buffers on the heap instead.
+
+```c
+// This will crash with a stack overflow!
+void infinite_recursion(void) {
+    int big_array[10000];  // 40KB per call
+    infinite_recursion();
+}
+
+// Use heap allocation for large data instead:
+int *big_array = malloc(10000 * sizeof(int));
+```
+
+## The Heap: Freedom and Responsibility
+
+The heap provides memory with arbitrary lifetimes — you decide when to allocate and when to free. This flexibility comes with three costs:
+
+**Speed**: Heap allocation is much slower than stack allocation. Moving the stack pointer is a single instruction. `malloc` must search for a free block, update bookkeeping data structures, and handle thread synchronization.
+
+**Fragmentation**: When you allocate and free blocks in random order, gaps form between allocated blocks. You might have 100MB free total but no single contiguous block larger than 1MB. This is like a parking garage where scattered empty spaces can't fit a large truck even though there's technically enough total space.
+
+**Manual management**: You must pair every `malloc` with a `free`. Forget to free and you leak memory. Free too early and other code accesses garbage (use-after-free). Free twice and you corrupt the allocator's data structures (double-free). These are among the most common and dangerous bugs in C.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    printf("Heap allocations:\\n");
+
+    int *a = malloc(sizeof(int));
+    int *b = malloc(sizeof(int));
+    int *c = malloc(100 * sizeof(int));
+
+    printf("a at %p\\n", (void*)a);
+    printf("b at %p\\n", (void*)b);
+    printf("c at %p (100 ints = %zu bytes)\\n",
+           (void*)c, 100 * sizeof(int));
+
+    // Heap grows upward (addresses increase)
+    printf("\\nb - a = %ld bytes\\n", (char*)b - (char*)a);
+
+    free(a);
+    free(b);
+    free(c);
+
+    // After freeing, allocator may reuse the space
+    int *d = malloc(sizeof(int));
+    printf("\\nd at %p (may reuse freed space)\\n", (void*)d);
+    free(d);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Static Variables: Stack Discipline, Heap Lifetime
+
+`static` local variables are a hybrid — they look like local variables syntactically, but they live in the data segment alongside globals. They're initialized once (when the program starts) and persist for the entire program duration.
+
+This is useful for counters that remember their state across calls, cached results, and one-time initialization. But beware: static variables make functions non-reentrant and non-thread-safe, since multiple callers share the same underlying storage.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int counter(void) {
+    static int count = 0;  // Data segment — persists between calls
+    return ++count;
+}
+
+int main() {
+    // Static variable persists
+    printf("Call 1: %d\\n", counter());
+    printf("Call 2: %d\\n", counter());
+    printf("Call 3: %d\\n", counter());
+
+    // Normal local would reset each call
+    for (int i = 0; i < 3; i++) {
+        int normal = 0;    // Stack — resets each iteration
+        static int persistent = 0;  // Data — persists
+        normal++;
+        persistent++;
+        printf("normal=%d, persistent=%d\\n", normal, persistent);
+    }
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## The register Keyword
+
+C has a `register` storage class hint that suggests the compiler keep a variable in a CPU register rather than in memory:
+
+```c
+register int i;
+for (i = 0; i < 1000000; i++) { ... }
+```
+
+In modern C, this keyword is effectively obsolete. Modern compilers are far better than humans at deciding which variables belong in registers. The main effect of `register` today is that you **can't take the address** of a `register` variable (`&i` is illegal), which is occasionally useful as a compile-time enforcement. You'll see it in old code, but there's no reason to use it in new code.
+
+## Alignment and Padding
+
+CPUs access memory most efficiently when data is **aligned** — stored at addresses that are multiples of the data's size. A 4-byte `int` should ideally sit at an address divisible by 4. If it doesn't, the CPU may need two memory reads instead of one (or on some architectures, the program crashes).
+
+To enforce this, the compiler inserts invisible **padding bytes** between struct fields. This has a practical consequence: reordering struct fields can change the struct's total size.
+
+<Editor defaultCode={`#include <stdio.h>
+
+struct Padded {
+    char a;     // 1 byte + 3 bytes padding
+    int b;      // 4 bytes
+    char c;     // 1 byte + 3 bytes padding
+};  // Total: 12 bytes
+
+struct Packed {
+    int b;      // 4 bytes
+    char a;     // 1 byte
+    char c;     // 1 byte + 2 bytes padding
+};  // Total: 8 bytes
+
+int main() {
+    printf("struct Padded: %zu bytes\\n", sizeof(struct Padded));
+    printf("struct Packed: %zu bytes\\n", sizeof(struct Packed));
+
+    // See the offsets
+    struct Padded p;
+    printf("\\nPadded offsets:\\n");
+    printf("  a at offset %zu\\n", (char*)&p.a - (char*)&p);
+    printf("  b at offset %zu\\n", (char*)&p.b - (char*)&p);
+    printf("  c at offset %zu\\n", (char*)&p.c - (char*)&p);
+
+    struct Packed q;
+    printf("\\nPacked offsets:\\n");
+    printf("  b at offset %zu\\n", (char*)&q.b - (char*)&q);
+    printf("  a at offset %zu\\n", (char*)&q.a - (char*)&q);
+    printf("  c at offset %zu\\n", (char*)&q.c - (char*)&q);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+<Callout type="tip">
+To minimize struct size, order members from largest to smallest. This reduces internal padding. The savings matter when you have arrays of millions of structs.
+</Callout>
+
+## Exercise: Segment Identification
+
+<Exercise
+  title="Which segment?"
+  description="Read N variable descriptions, each being 'local', 'global_init', 'global_uninit', or 'heap'. For each, print which memory segment it belongs to: 'stack', 'data', 'bss', or 'heap'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    for (int i = 0; i < n; i++) {
+        char type[20];
+        scanf("%s", type);
+
+        if (strcmp(type, "local") == 0) {
+            printf("stack\\n");
+        } else if (strcmp(type, "global_init") == 0) {
+            printf("data\\n");
+        } else if (strcmp(type, "global_uninit") == 0) {
+            printf("bss\\n");
+        } else if (strcmp(type, "heap") == 0) {
+            printf("heap\\n");
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nlocal global_init global_uninit heap", expected_stdout: "stack\ndata\nbss\nheap\n" },
+    { stdin: "2\nheap local", expected_stdout: "heap\nstack\n" },
+    { stdin: "3\nglobal_uninit global_init local", expected_stdout: "bss\ndata\nstack\n" }
+  ]}
+  hints={[
+    "Local variables live on the stack.",
+    "Initialized globals are in the data segment.",
+    "Uninitialized globals are in the BSS segment (Block Started by Symbol).",
+    "malloc'd memory is on the heap."
+  ]}
+/>
+
+## Exercise: Struct Size Calculator
+
+<Exercise
+  title="Estimate struct size"
+  description="Read N field sizes (in bytes). Assume 4-byte alignment for all fields. For each field, round up to the next 4-byte boundary if needed. Print the total struct size (including final padding to align to 4 bytes)."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int offset = 0;
+    for (int i = 0; i < n; i++) {
+        int size;
+        scanf("%d", &size);
+
+        // Align offset to field's natural alignment (simplified: align to size or 4, whichever is smaller)
+        int align = (size < 4) ? size : 4;
+        if (offset % align != 0) {
+            offset += align - (offset % align);
+        }
+        offset += size;
+    }
+
+    // Final padding to align struct size to 4 bytes
+    if (offset % 4 != 0) {
+        offset += 4 - (offset % 4);
+    }
+
+    printf("%d\\n", offset);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 4 1", expected_stdout: "12\n" },
+    { stdin: "3\n4 1 1", expected_stdout: "8\n" },
+    { stdin: "1\n4", expected_stdout: "4\n" },
+    { stdin: "2\n1 1", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "Fields are aligned to their own size (or 4, whichever is smaller).",
+    "After placing all fields, the total struct size is rounded up to the largest alignment.",
+    "Example: {char, int, char} = 1 + 3 padding + 4 + 1 + 3 padding = 12 bytes."
+  ]}
+/>
+
+## What's Next
+
+Phase 3 is complete! Next up: **Phase 4 — OS & Concurrency**, starting with **system calls and processes** — how C programs interact with the operating system.

@@ -1,0 +1,420 @@
+---
+title: "UDP & Advanced Networking"
+module: "IPC & Sockets"
+order: 3
+description: "UDP sockets, non-blocking I/O, select/poll, and building simple network protocols."
+difficulty: "advanced"
+---
+
+TCP gives you reliability: every byte arrives, in order, or you get an error. But that reliability has a cost — connection setup, acknowledgments, retransmissions, and flow control all add latency and overhead. Sometimes, you'd rather drop a packet than wait for it.
+
+That's UDP. And understanding *when* to choose it over TCP is one of the most important decisions in network programming.
+
+## Why UDP Exists
+
+Imagine you're streaming live video. A frame arrives late — after the next frame has already been displayed. What should you do with the late frame? Show it? That would cause a visual glitch. The correct answer is: throw it away. TCP would have paused the entire stream waiting for that frame to be retransmitted, causing a stutter. UDP just lets it go, and the video keeps flowing smoothly.
+
+Or consider DNS: you send a single small query ("What's the IP for google.com?") and expect a single small answer. Setting up a full TCP connection (three-way handshake, then teardown) for one question and one answer is wasteful. UDP lets you fire off the question and get the answer in just two packets total.
+
+Or multiplayer games: you're sending player position updates 60 times per second. If update #47 is lost, you don't want to retransmit it — update #48 already has newer position data. The old data is stale. TCP would insist on retransmitting #47 and delay #48 behind it (a problem called "head-of-line blocking"). UDP just delivers #48 immediately.
+
+## The Postcard Analogy
+
+If TCP is like the postal system with registered mail (guaranteed delivery, tracking, signature required), then UDP is like sending a postcard. You write the destination address, drop it in the mailbox, and hope for the best. It's fast and cheap, but:
+
+- It might not arrive at all (packet loss)
+- If you send three postcards, they might arrive out of order
+- There's no confirmation of delivery
+- But it's quick — no forms to fill out, no tracking overhead
+
+The postcard analogy also reveals why UDP uses `sendto()`/`recvfrom()` instead of `send()`/`recv()`: since there's no connection, you must specify the destination address on *every* send, just like writing the address on every postcard. And when you receive a postcard, you check the return address to know who sent it.
+
+## TCP vs UDP
+
+| Feature | TCP | UDP |
+|---------|-----|-----|
+| Connection | Required (3-way handshake) | No connection |
+| Reliability | Guaranteed delivery | Best effort |
+| Ordering | In-order delivery | May arrive out of order |
+| Overhead | Higher (headers, ACKs) | Lower |
+| Use cases | Web, email, file transfer | Video, gaming, DNS |
+
+## When to Choose UDP
+
+- **Real-time audio/video**: Latency matters more than perfection. A dropped frame is better than a frozen stream.
+- **Online games**: Player positions update constantly. Stale data is worthless — you want the newest state, not a retransmission of old state.
+- **DNS lookups**: Single question, single answer. Connection overhead would double the latency.
+- **IoT sensors**: A temperature sensor reporting every second doesn't need to guarantee every reading arrives. If one is lost, the next one comes in a second anyway.
+- **Broadcast/multicast**: UDP can send to multiple recipients at once. TCP can't — it's point-to-point.
+
+Choose TCP when correctness matters (file transfer, web pages, database queries, email) or when you need the data to arrive complete and in order.
+
+## UDP Server
+
+Notice how much simpler this is than TCP. No `listen()`, no `accept()` — the server just binds and immediately starts receiving datagrams from anyone:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
+int main() {
+    // UDP server — no listen/accept needed!
+    // 1. Create UDP socket
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = INADDR_ANY,
+        .sin_port = htons(9090)
+    };
+
+    bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+    printf("UDP server listening on port 9090...\\n");
+
+    // 2. Receive datagrams (no connection)
+    struct sockaddr_in client;
+    socklen_t client_len = sizeof(client);
+    char buffer[1024];
+
+    ssize_t n = recvfrom(sock, buffer, sizeof(buffer) - 1, 0,
+                         (struct sockaddr *)&client, &client_len);
+    buffer[n] = '\\0';
+    printf("Received: %s\\n", buffer);
+
+    // 3. Send response back to sender
+    const char *reply = "ACK";
+    sendto(sock, reply, strlen(reply), 0,
+           (struct sockaddr *)&client, client_len);
+
+    close(sock);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The key difference from TCP: `recvfrom()` tells you *who* sent the datagram (filling in the `client` address structure). You need this because there's no connection — any sender can send to your socket at any time. The server uses that address to send a reply back with `sendto()`.
+
+Also notice: a single UDP socket handles all clients. There's no `accept()` creating separate sockets per conversation. Every datagram comes through the same socket, and you identify senders by their address.
+
+## UDP Client
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+int main() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+
+    struct sockaddr_in server = {
+        .sin_family = AF_INET,
+        .sin_port = htons(9090)
+    };
+    inet_pton(AF_INET, "127.0.0.1", &server.sin_addr);
+
+    // No connect needed — just send!
+    const char *msg = "Hello UDP!";
+    sendto(sock, msg, strlen(msg), 0,
+           (struct sockaddr *)&server, sizeof(server));
+
+    // Receive response
+    char buffer[1024];
+    ssize_t n = recvfrom(sock, buffer, sizeof(buffer) - 1, 0, NULL, NULL);
+    buffer[n] = '\\0';
+    printf("Server says: %s\\n", buffer);
+
+    close(sock);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## Message Boundaries: A Crucial Difference
+
+UDP preserves message boundaries — TCP doesn't. This is subtle but important.
+
+With TCP, if you `write()` "Hello" then `write()` "World", the receiver might `read()` "HelloWorld" in one call, or "Hel" then "loWorld", or any other split. TCP is a byte stream — it doesn't know where one message ends and another begins.
+
+With UDP, if you `sendto()` "Hello" then `sendto()` "World", the receiver gets exactly two datagrams: one containing "Hello" and one containing "World". Each `sendto()` produces exactly one datagram, and each `recvfrom()` receives exactly one datagram. Messages are atomic.
+
+This means with UDP you don't need to implement framing (length-prefixing or delimiters) — each datagram is already a complete message. But there's a catch: if a datagram exceeds the network's MTU (typically ~1500 bytes for Ethernet), it gets fragmented at the IP layer, and if *any* fragment is lost, the entire datagram is dropped. So keep UDP messages small.
+
+## Non-Blocking I/O
+
+By default, `read()`/`accept()`/`recvfrom()` all **block** — they pause your program until data arrives. This is fine for simple programs, but what if your server needs to monitor multiple sockets? With blocking I/O, you're stuck waiting on one socket while data might be arriving on another.
+
+Making sockets non-blocking changes their behavior: instead of waiting, calls like `read()` return immediately with `errno` set to `EAGAIN` if no data is available. But simply polling in a tight loop ("Is data ready? No. Is data ready? No. Is data ready?") wastes CPU. The real solution is I/O multiplexing.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <fcntl.h>
+
+// Setting non-blocking mode:
+// int flags = fcntl(sock, F_GETFL, 0);
+// fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+//
+// Now read() returns -1 with errno=EAGAIN if no data available
+
+int main() {
+    printf("=== Non-Blocking I/O ===\\n\\n");
+
+    printf("Blocking (default):\\n");
+    printf("  read()   → waits until data arrives\\n");
+    printf("  accept() → waits until client connects\\n");
+    printf("  Problem: can only handle one thing at a time\\n\\n");
+
+    printf("Non-Blocking:\\n");
+    printf("  read()   → returns EAGAIN if no data\\n");
+    printf("  accept() → returns EAGAIN if no client\\n");
+    printf("  Need to poll repeatedly (wasteful)\\n\\n");
+
+    printf("Solution: I/O multiplexing\\n");
+    printf("  select() / poll() / epoll()\\n");
+    printf("  Monitor multiple descriptors at once\\n");
+    printf("  Block until ANY descriptor is ready\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+## select() — I/O Multiplexing
+
+`select()` solves the "monitor multiple sources" problem. You give it a set of file descriptors and say "wake me up when *any* of these has data to read." It's like a secretary watching multiple phone lines — they sleep until any phone rings, then tell you which one it was.
+
+This is the foundation of event-driven servers. Instead of one thread per client, you have one thread monitoring *all* clients. When any client sends data, `select()` wakes up and tells you which clients are ready.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <sys/select.h>
+
+// select() example — handle multiple clients
+// int max_fd = ...;
+// fd_set readfds;
+// FD_ZERO(&readfds);
+// FD_SET(server_fd, &readfds);
+// FD_SET(client1_fd, &readfds);
+//
+// int ready = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+//
+// if (FD_ISSET(server_fd, &readfds))  → new connection
+// if (FD_ISSET(client1_fd, &readfds)) → data from client1
+
+int main() {
+    printf("=== I/O Multiplexing ===\\n\\n");
+
+    printf("select(nfds, readfds, writefds, errfds, timeout)\\n\\n");
+
+    printf("fd_set operations:\\n");
+    printf("  FD_ZERO(&set)    - clear set\\n");
+    printf("  FD_SET(fd, &set) - add fd to set\\n");
+    printf("  FD_CLR(fd, &set) - remove fd from set\\n");
+    printf("  FD_ISSET(fd, &set) - check if fd is ready\\n\\n");
+
+    printf("Comparison:\\n");
+    printf("  select(): portable, max 1024 fds\\n");
+    printf("  poll():   no fd limit, slightly better API\\n");
+    printf("  epoll():  Linux only, O(1) per event, best for many fds\\n");
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+The progression from `select()` to `poll()` to `epoll()` is about scaling. `select()` is limited to 1024 file descriptors and requires scanning the entire set every time. `poll()` removes the limit but still scans linearly. `epoll()` (Linux) uses a kernel-level data structure so it only tells you about descriptors that are *actually ready* — O(1) per event instead of O(n) per call. This is what makes 100,000+ connection servers possible.
+
+## Simple Protocol Design
+
+Raw sockets give you a byte pipe (TCP) or a datagram pipe (UDP). To build an application, you need a *protocol* — an agreement on what the bytes mean. Even a simple key-value server needs rules: How does the server know where one command ends? How does it parse arguments? What does a response look like?
+
+Here's a simple text protocol: each message is one line, with a command and arguments separated by spaces. The newline character marks message boundaries (solving TCP's "no message boundaries" problem).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <string.h>
+
+// A simple text protocol: "COMMAND ARG1 ARG2\\n"
+// Example commands:
+//   GET key        → VALUE key value\\n
+//   SET key value  → OK\\n
+//   DEL key        → DELETED\\n
+
+typedef struct {
+    char command[16];
+    char key[64];
+    char value[256];
+} Request;
+
+Request parse_request(const char *line) {
+    Request req = {0};
+    sscanf(line, "%15s %63s %255[^\\n]", req.command, req.key, req.value);
+    return req;
+}
+
+int main() {
+    const char *requests[] = {
+        "SET name Alice",
+        "SET age 30",
+        "GET name",
+        "GET age",
+        "DEL name"
+    };
+
+    // Simple key-value store
+    char keys[10][64] = {0};
+    char values[10][256] = {0};
+    int count = 0;
+
+    for (int i = 0; i < 5; i++) {
+        Request req = parse_request(requests[i]);
+
+        if (strcmp(req.command, "SET") == 0) {
+            // Find or create entry
+            int found = -1;
+            for (int j = 0; j < count; j++) {
+                if (strcmp(keys[j], req.key) == 0) { found = j; break; }
+            }
+            if (found == -1) found = count++;
+            strcpy(keys[found], req.key);
+            strcpy(values[found], req.value);
+            printf("< OK\\n");
+        } else if (strcmp(req.command, "GET") == 0) {
+            int found = -1;
+            for (int j = 0; j < count; j++) {
+                if (strcmp(keys[j], req.key) == 0) { found = j; break; }
+            }
+            if (found >= 0) {
+                printf("< VALUE %s %s\\n", keys[found], values[found]);
+            } else {
+                printf("< NOT_FOUND\\n");
+            }
+        } else if (strcmp(req.command, "DEL") == 0) {
+            printf("< DELETED\\n");
+        }
+    }
+
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+Real-world protocols like HTTP, SMTP, and Redis's RESP all follow this same pattern — a text-based command format with clear delimiters. Binary protocols (like Protocol Buffers or MessagePack) trade human-readability for efficiency, but the principle is the same: both sides agree on a format before any data is exchanged.
+
+## Exercise: Protocol Parser
+
+<Exercise
+  title="Parse network messages"
+  description="Read N messages in the format 'TYPE:LENGTH:DATA' where TYPE is a string, LENGTH is an integer, and DATA is a string. Print each parsed field on separate lines."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+    getchar();
+
+    for (int i = 0; i < n; i++) {
+        char line[256];
+        fgets(line, sizeof(line), stdin);
+        line[strcspn(line, "\\n")] = '\\0';
+
+        char type[32], data[128];
+        int length;
+
+        // Parse TYPE:LENGTH:DATA
+        char *p1 = strchr(line, ':');
+        if (!p1) continue;
+        *p1 = '\\0';
+        strcpy(type, line);
+
+        char *p2 = strchr(p1 + 1, ':');
+        if (!p2) continue;
+        *p2 = '\\0';
+        length = atoi(p1 + 1);
+
+        strcpy(data, p2 + 1);
+
+        printf("Type: %s\\n", type);
+        printf("Length: %d\\n", length);
+        printf("Data: %s\\n", data);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "2\nMSG:5:Hello\nERR:3:404", expected_stdout: "Type: MSG\nLength: 5\nData: Hello\nType: ERR\nLength: 3\nData: 404\n" },
+    { stdin: "1\nDATA:11:hello world", expected_stdout: "Type: DATA\nLength: 11\nData: hello world\n" }
+  ]}
+  hints={[
+    "Use strchr() to find the ':' delimiters.",
+    "Replace ':' with '\\0' to split the string into parts.",
+    "Parse the length as an integer with atoi()."
+  ]}
+/>
+
+## Exercise: Client-Server State Machine
+
+<Exercise
+  title="Connection state machine"
+  description="Simulate a TCP connection state machine. Read N events. States: CLOSED, LISTENING, SYN_SENT, ESTABLISHED, CLOSE_WAIT, TIME_WAIT. Events: 'listen', 'connect', 'accept', 'send', 'close'. Print the state after each event."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char state[20];
+    strcpy(state, "CLOSED");
+
+    for (int i = 0; i < n; i++) {
+        char event[20];
+        scanf("%s", event);
+
+        if (strcmp(state, "CLOSED") == 0) {
+            if (strcmp(event, "listen") == 0) {
+                strcpy(state, "LISTENING");
+            } else if (strcmp(event, "connect") == 0) {
+                strcpy(state, "SYN_SENT");
+            }
+        } else if (strcmp(state, "LISTENING") == 0) {
+            if (strcmp(event, "accept") == 0) {
+                strcpy(state, "ESTABLISHED");
+            }
+        } else if (strcmp(state, "SYN_SENT") == 0) {
+            if (strcmp(event, "accept") == 0) {
+                strcpy(state, "ESTABLISHED");
+            }
+        } else if (strcmp(state, "ESTABLISHED") == 0) {
+            if (strcmp(event, "close") == 0) {
+                strcpy(state, "CLOSE_WAIT");
+            }
+            // 'send' stays in ESTABLISHED
+        } else if (strcmp(state, "CLOSE_WAIT") == 0) {
+            if (strcmp(event, "close") == 0) {
+                strcpy(state, "TIME_WAIT");
+            }
+        } else if (strcmp(state, "TIME_WAIT") == 0) {
+            if (strcmp(event, "close") == 0) {
+                strcpy(state, "CLOSED");
+            }
+        }
+
+        printf("%s\\n", state);
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\nlisten\naccept\nsend\nsend\nclose", expected_stdout: "LISTENING\nESTABLISHED\nESTABLISHED\nESTABLISHED\nCLOSE_WAIT\n" },
+    { stdin: "3\nconnect\naccept\nclose", expected_stdout: "SYN_SENT\nESTABLISHED\nCLOSE_WAIT\n" },
+    { stdin: "4\nlisten\naccept\nclose\nclose", expected_stdout: "LISTENING\nESTABLISHED\nCLOSE_WAIT\nTIME_WAIT\n" }
+  ]}
+  hints={[
+    "This is a simplified TCP state machine.",
+    "In CLOSED, 'listen' goes to LISTENING, 'connect' goes to SYN_SENT.",
+    "In ESTABLISHED, 'send' stays put, 'close' moves to CLOSE_WAIT."
+  ]}
+/>
+
+## What's Next
+
+The final IPC lesson: **select/epoll and concurrent servers** — handling thousands of simultaneous connections.

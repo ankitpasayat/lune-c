@@ -1,0 +1,320 @@
+---
+title: "Time & Space Complexity"
+module: "Algorithm Techniques"
+order: 1
+description: "Learn Big O notation and how to analyze the time and space efficiency of your code."
+difficulty: "beginner"
+---
+
+You've written code that works. But *how fast* does it work? And does it matter?
+
+Imagine searching for a name in a phone book. You could start at page 1 and check
+every name (linear search). Or you could open to the middle, see if your name comes
+before or after, and eliminate half the book (binary search). Both work. One checks
+500,000 names on average. The other checks about 20.
+
+That difference — the shape of how work grows with input size — is what complexity
+analysis measures.
+
+## Big O: The Growth Rate
+
+Big O notation ignores constants and lower-order terms. It only cares about **what
+happens as the input gets large**. O(n) means the work roughly doubles when the input
+doubles. O(n²) means it quadruples.
+
+Why ignore constants? Because `2n` and `100n` both have the same shape — they're both
+straight lines. The difference between O(n) and O(n²) is the difference between a
+line and a parabola. No constant can close that gap at scale.
+
+| Big O | Name | Growth | Example |
+|-------|------|--------|---------|
+| O(1) | Constant | Flat | Array index access |
+| O(log n) | Logarithmic | Barely curves up | Binary search |
+| O(n) | Linear | Straight line | Single loop |
+| O(n log n) | Linearithmic | Slight bend | Merge sort |
+| O(n²) | Quadratic | Parabola | Nested loops |
+| O(2^n) | Exponential | Vertical wall | Naive Fibonacci |
+
+To feel this: for `n = 1,000,000`, an O(n) algorithm does ~1 million operations
+(milliseconds). O(n²) does ~1 trillion (hours). O(log n) does ~20 (microseconds).
+
+<Editor defaultCode={`#include <stdio.h>
+
+// O(1) — constant: does the same work regardless of n
+int get_first(int arr[], int n) {
+    return arr[0];
+}
+
+// O(n) — linear: touches each element once
+int sum(int arr[], int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        total += arr[i];
+    }
+    return total;
+}
+
+// O(n²) — quadratic: compare every pair
+int has_duplicate(int arr[], int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (arr[i] == arr[j]) return 1;
+        }
+    }
+    return 0;
+}
+
+int main() {
+    int arr[] = {4, 2, 7, 1, 9, 3, 8, 5, 6, 0};
+    int n = 10;
+
+    printf("First element (O(1)):  %d\\n", get_first(arr, n));
+    printf("Sum (O(n)):            %d\\n", sum(arr, n));
+    printf("Has duplicate (O(n²)): %s\\n",
+           has_duplicate(arr, n) ? "yes" : "no");
+
+    return 0;
+}
+`} time="O(n²)" space="O(1)" />
+
+## How to Count: The Loop Rule
+
+Analyzing complexity comes down to counting *how many times the innermost operation
+runs* as a function of input size.
+
+**Single loop over n items → O(n):**
+The body runs `n` times. Double the input, double the work.
+
+**Nested loops → multiply:**
+An outer loop of `n` with an inner loop of `n` = `n × n` = O(n²). But be careful:
+the inner loop's bound matters. If the inner loop runs a constant number of times
+(say, always 5 iterations), the total is still O(n).
+
+**Sequential loops → add (then drop the smaller):**
+One loop of O(n) followed by another of O(n²)? Total = O(n) + O(n²) = O(n²).
+The quadratic term dominates.
+
+**Halving each step → O(log n):**
+If you divide the remaining work in half each iteration (like binary search), you
+need at most $\log_2(n)$ iterations. For a million elements, that's about 20.
+
+<Editor defaultCode={`#include <stdio.h>
+
+int main() {
+    int n = 16;
+
+    // O(n): straightforward
+    printf("O(n):      ");
+    int count1 = 0;
+    for (int i = 0; i < n; i++) count1++;
+    printf("%d iterations\\n", count1);
+
+    // O(n²): nested
+    printf("O(n²):     ");
+    int count2 = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            count2++;
+    printf("%d iterations\\n", count2);
+
+    // O(log n): halving
+    printf("O(log n):  ");
+    int count3 = 0;
+    for (int i = n; i >= 1; i /= 2) count3++;
+    printf("%d iterations\\n", count3);
+
+    // O(n log n): linear work at each halving level
+    printf("O(n log n): ");
+    int count4 = 0;
+    for (int i = n; i >= 1; i /= 2)
+        for (int j = 0; j < n; j++)
+            count4++;
+    printf("%d iterations\\n", count4);
+
+    return 0;
+}
+`} />
+
+<Callout type="info">
+A common trap: not every nested loop is O(n²). If the inner loop depends on the
+outer variable (like `for j from 0 to i`), the total is
+`1 + 2 + 3 + ... + n = n*(n+1)/2`, which is still O(n²) — but it's half the
+work of a full n×n grid. Big O drops the constant, so it's the same class.
+</Callout>
+
+## Space Complexity
+
+Time complexity measures compute work. Space complexity measures **extra memory**
+your algorithm uses beyond the input itself.
+
+An algorithm that modifies the input array in-place and uses only a few extra variables
+is O(1) space. One that creates a copy of the array is O(n). One that builds a 2D table
+is O(n²).
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+// O(1) space — only a handful of variables
+int find_max(int arr[], int n) {
+    int max = arr[0];
+    for (int i = 1; i < n; i++) {
+        if (arr[i] > max) max = arr[i];
+    }
+    return max;
+}
+
+// O(n) space — allocates a new array
+int *reverse_copy(int arr[], int n) {
+    int *result = malloc(n * sizeof(int));
+    for (int i = 0; i < n; i++) {
+        result[i] = arr[n - 1 - i];
+    }
+    return result;
+}
+
+int main() {
+    int arr[] = {3, 1, 4, 1, 5, 9, 2, 6};
+    int n = 8;
+
+    printf("Max (O(1) space): %d\\n", find_max(arr, n));
+
+    int *rev = reverse_copy(arr, n);
+    printf("Reversed (O(n) space): ");
+    for (int i = 0; i < n; i++) printf("%d ", rev[i]);
+    printf("\\n");
+    free(rev);
+
+    return 0;
+}
+`} />
+
+Don't forget: recursive functions use O(depth) space for the call stack. A recursive
+function with depth `n` uses O(n) space even if it allocates nothing.
+
+## Best, Worst, and Average Case
+
+The same algorithm can run at different speeds on different inputs:
+
+<Editor defaultCode={`#include <stdio.h>
+
+// Linear search: find target in array
+int linear_search(int arr[], int n, int target) {
+    int comparisons = 0;
+    for (int i = 0; i < n; i++) {
+        comparisons++;
+        if (arr[i] == target) {
+            printf("  Found %d at index %d after %d comparisons\\n",
+                   target, i, comparisons);
+            return i;
+        }
+    }
+    printf("  %d not found after %d comparisons\\n", target, comparisons);
+    return -1;
+}
+
+int main() {
+    int arr[] = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    int n = 10;
+
+    printf("Best case (first element):\\n");
+    linear_search(arr, n, 10);
+
+    printf("Worst case (last element):\\n");
+    linear_search(arr, n, 100);
+
+    printf("Worst case (not found):\\n");
+    linear_search(arr, n, 55);
+
+    return 0;
+}
+`} />
+
+- **Best case:** O(1) — target is the first element
+- **Worst case:** O(n) — target is last or missing
+- **Average case:** O(n) — on average, check half the array
+
+<Callout type="info">
+When we say an algorithm is "O(n)," we almost always mean the **worst case**. This
+gives a guarantee: no matter what input you throw at it, it won't be slower than this.
+Average-case analysis is trickier because you need assumptions about input distribution.
+</Callout>
+
+## The Time-Space Tradeoff
+
+You'll frequently face this choice: use more memory to save time, or use more time to
+save memory. This tradeoff is everywhere:
+
+- **Hash tables** use O(n) space to give O(1) lookups (vs. O(n) for linear search)
+- **Memoization** stores results to avoid recomputation (we'll see this in Dynamic Programming)
+- **Sorting** costs O(n log n) time upfront but makes later searches O(log n) instead of O(n)
+
+There's no universal right answer — it depends on your constraints. But understanding
+complexity lets you make this choice *consciously* instead of accidentally.
+
+## Exercise: Identify Complexity
+
+<Exercise
+  title="Count operations"
+  description="Given n, compute how many times the inner loop body runs in this nested loop pattern: for i from 0 to n-1, for j from 0 to i. Print the count."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j <= i; j++) {
+            count++;
+        }
+    }
+
+    printf("%d\\n", count);
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4", expected_stdout: "10\n" },
+    { stdin: "5", expected_stdout: "15\n" },
+    { stdin: "10", expected_stdout: "55\n" },
+    { stdin: "1", expected_stdout: "1\n" }
+  ]}
+  hints={[
+    "The inner loop runs 1 + 2 + 3 + ... + n = n*(n+1)/2 times.",
+    "This is O(n²) even though the inner loop doesn't always go to n."
+  ]}
+/>
+
+## Exercise: Compare Two Approaches
+
+<Exercise
+  title="Efficient max difference"
+  description="Given an array of n integers, find the maximum difference between any two elements (max - min). Read n, then n integers. Print the result. Your solution should be O(n) time, O(1) space — don't use a nested O(n²) approach!"
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    // Find max - min in O(n) time, O(1) space
+    // Don't use a nested O(n^2) approach!
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n1 5 3 9 2", expected_stdout: "8\n" },
+    { stdin: "3\n10 10 10", expected_stdout: "0\n" },
+    { stdin: "4\n-5 0 5 10", expected_stdout: "15\n" }
+  ]}
+  hints={[
+    "You don't need to compare every pair. Just find the max and min in a single pass.",
+    "Initialize min and max to arr[0]. Update them as you scan through the array.",
+    "Print max - min at the end."
+  ]}
+/>

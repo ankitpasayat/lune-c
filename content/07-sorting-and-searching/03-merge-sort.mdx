@@ -1,0 +1,281 @@
+---
+title: "Merge Sort"
+module: "Sorting & Searching"
+order: 3
+description: "Divide-and-conquer sorting — split, sort halves recursively, merge back together."
+difficulty: "intermediate"
+---
+
+Merge sort is the first **O(n log n)** algorithm we'll learn. It uses the divide-and-conquer strategy: split the problem in half, solve each half, then combine the results.
+
+## The Idea
+
+1. **Divide**: Split the array into two halves
+2. **Conquer**: Recursively sort each half
+3. **Combine**: Merge the two sorted halves
+
+<Editor defaultCode={`#include <stdio.h>
+
+void merge(int arr[], int left, int mid, int right) {
+    int n1 = mid - left + 1;
+    int n2 = right - mid;
+
+    // Temporary arrays
+    int L[n1], R[n2];
+
+    for (int i = 0; i < n1; i++) L[i] = arr[left + i];
+    for (int i = 0; i < n2; i++) R[i] = arr[mid + 1 + i];
+
+    // Merge back
+    int i = 0, j = 0, k = left;
+    while (i < n1 && j < n2) {
+        if (L[i] <= R[j]) {
+            arr[k++] = L[i++];
+        } else {
+            arr[k++] = R[j++];
+        }
+    }
+
+    // Copy remaining
+    while (i < n1) arr[k++] = L[i++];
+    while (j < n2) arr[k++] = R[j++];
+}
+
+void merge_sort(int arr[], int left, int right) {
+    if (left >= right) return;  // base case: 0 or 1 element
+
+    int mid = left + (right - left) / 2;
+    merge_sort(arr, left, mid);       // sort left half
+    merge_sort(arr, mid + 1, right);  // sort right half
+    merge(arr, left, mid, right);     // merge
+}
+
+int main() {
+    int arr[] = {38, 27, 43, 3, 9, 82, 10};
+    int n = 7;
+
+    merge_sort(arr, 0, n - 1);
+
+    for (int i = 0; i < n; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n log n)" space="O(n)" />
+
+<Complexity time="O(n log n)" space="O(n)" />
+
+## How The Merge Works
+
+The `merge` function is the key. Given two sorted subarrays, it combines them into one sorted array:
+
+```
+Left:  [3, 27, 38, 43]
+Right: [9, 10, 82]
+
+Compare: 3 < 9  → take 3
+Compare: 27 > 9 → take 9
+Compare: 27 > 10 → take 10
+Compare: 27 < 82 → take 27
+Compare: 38 < 82 → take 38
+Compare: 43 < 82 → take 43
+Remaining: take 82
+
+Result: [3, 9, 10, 27, 38, 43, 82]
+```
+
+Each merge takes O(n) time, and there are O(log n) levels of recursion, giving O(n log n) total.
+
+## Trace Through the Recursion
+
+<Editor defaultCode={`#include <stdio.h>
+
+int depth = 0;
+
+void print_indent() {
+    for (int i = 0; i < depth; i++) printf("  ");
+}
+
+void merge(int arr[], int l, int m, int r) {
+    int n1 = m - l + 1, n2 = r - m;
+    int L[n1], R[n2];
+    for (int i = 0; i < n1; i++) L[i] = arr[l + i];
+    for (int i = 0; i < n2; i++) R[i] = arr[m + 1 + i];
+
+    int i = 0, j = 0, k = l;
+    while (i < n1 && j < n2)
+        arr[k++] = (L[i] <= R[j]) ? L[i++] : R[j++];
+    while (i < n1) arr[k++] = L[i++];
+    while (j < n2) arr[k++] = R[j++];
+
+    print_indent();
+    printf("Merged [%d..%d]: ", l, r);
+    for (int x = l; x <= r; x++) printf("%d ", arr[x]);
+    printf("\\n");
+}
+
+void merge_sort(int arr[], int l, int r) {
+    if (l >= r) return;
+    int m = l + (r - l) / 2;
+    depth++;
+    merge_sort(arr, l, m);
+    merge_sort(arr, m + 1, r);
+    depth--;
+    merge(arr, l, m, r);
+}
+
+int main() {
+    int arr[] = {5, 2, 8, 1};
+    printf("Sorting: 5 2 8 1\\n\\n");
+    merge_sort(arr, 0, 3);
+    return 0;
+}
+`} time="O(n log n)" space="O(n)" />
+
+<Callout type="info">
+Merge sort is **stable** (equal elements keep their relative order) and **guaranteed** O(n log n) regardless of input. The downside: it needs O(n) extra space for the temporary arrays.
+</Callout>
+
+## When to Use Merge Sort
+
+| Pro | Con |
+|-----|-----|
+| Always O(n log n) | O(n) extra memory |
+| Stable sort | Slower than quicksort in practice |
+| Great for linked lists | More complex than basic sorts |
+| Naturally parallelizable | |
+
+## Exercise: Implement Merge Sort
+
+<Exercise
+  title="Merge sort"
+  description="Read N, then N integers. Sort them using merge sort and print the sorted array space-separated."
+  starterCode={`#include <stdio.h>
+
+void merge(int arr[], int left, int mid, int right) {
+    // TODO: merge two sorted halves
+}
+
+void merge_sort(int arr[], int left, int right) {
+    // TODO: divide and conquer
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    merge_sort(arr, 0, n - 1);
+
+    for (int i = 0; i < n; i++) {
+        if (i > 0) printf(" ");
+        printf("%d", arr[i]);
+    }
+    printf("\\n");
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "7\n38 27 43 3 9 82 10", expected_stdout: "3 9 10 27 38 43 82\n" },
+    { stdin: "5\n5 4 3 2 1", expected_stdout: "1 2 3 4 5\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" }
+  ]}
+  hints={[
+    "In merge_sort: base case is left >= right. Find mid, recurse on both halves, then merge.",
+    "In merge: create temp arrays for left and right halves.",
+    "Use two pointers to merge: always take the smaller of the two front elements.",
+    "Don't forget to copy remaining elements when one half is exhausted."
+  ]}
+/>
+
+## Exercise: Count Inversions
+
+<Exercise
+  title="Count inversions"
+  description="An inversion is a pair (i, j) where i < j but arr[i] > arr[j]. Read N, then N integers. Print the number of inversions. Hint: modify merge sort to count swaps during merge."
+  starterCode={`#include <stdio.h>
+
+long long merge_count(int arr[], int left, int mid, int right) {
+    // TODO: merge and count inversions
+    return 0;
+}
+
+long long sort_count(int arr[], int left, int right) {
+    if (left >= right) return 0;
+    int mid = left + (right - left) / 2;
+    long long count = 0;
+    count += sort_count(arr, left, mid);
+    count += sort_count(arr, mid + 1, right);
+    count += merge_count(arr, left, mid, right);
+    return count;
+}
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int arr[1000];
+    for (int i = 0; i < n; i++) {
+        scanf("%d", &arr[i]);
+    }
+
+    printf("%lld\\n", sort_count(arr, 0, n - 1));
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n2 4 1 3 5", expected_stdout: "3\n" },
+    { stdin: "4\n4 3 2 1", expected_stdout: "6\n" },
+    { stdin: "3\n1 2 3", expected_stdout: "0\n" }
+  ]}
+  hints={[
+    "During merge, when you take an element from the right half, all remaining elements in the left half form inversions with it.",
+    "If R[j] < L[i], add (n1 - i) to the inversion count.",
+    "This gives an O(n log n) solution instead of the naive O(n²) approach."
+  ]}
+/>
+
+## Exercise: Merge Two Sorted Arrays
+
+<Exercise
+  title="Merge two sorted arrays"
+  description="Read N1, then N1 sorted integers. Read N2, then N2 sorted integers. Print the merged sorted result."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n1, n2;
+    scanf("%d", &n1);
+    int a[1000];
+    for (int i = 0; i < n1; i++) scanf("%d", &a[i]);
+
+    scanf("%d", &n2);
+    int b[1000];
+    for (int i = 0; i < n2; i++) scanf("%d", &b[i]);
+
+    // Merge and print
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n1 3 5\n3\n2 4 6", expected_stdout: "1 2 3 4 5 6\n" },
+    { stdin: "2\n1 1\n2\n1 1", expected_stdout: "1 1 1 1\n" },
+    { stdin: "0\n\n3\n4 5 6", expected_stdout: "4 5 6\n" }
+  ]}
+  hints={[
+    "Use two pointers, one for each array.",
+    "Always take the smaller of the two front elements.",
+    "After one array is done, print the rest of the other."
+  ]}
+/>
+
+## What's Next
+
+Next: **quicksort** — typically faster than merge sort in practice, using a different divide-and-conquer approach.

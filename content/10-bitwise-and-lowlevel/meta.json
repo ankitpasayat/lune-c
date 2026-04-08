@@ -1,0 +1,6 @@
+{
+  "title": "Bitwise & Low-Level",
+  "order": 10,
+  "phase": 3,
+  "description": "Number representations, bitwise operators, bit manipulation, and memory layout."
+}

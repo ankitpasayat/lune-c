@@ -1,0 +1,463 @@
+---
+title: "Singly Linked List"
+module: "Linked Lists"
+order: 1
+description: "Build a singly linked list from scratch — nodes, traversal, insertion, and deletion."
+difficulty: "intermediate"
+---
+
+Arrays are comfortable. You declare one, you index into it, you're done. So why would anyone reach for a linked list?
+
+The answer is about **tradeoffs**. Arrays give you instant access to any element — want the 50th item? Jump straight to `arr[49]`. But arrays are rigid. Inserting an element in the middle means shuffling everything after it one slot to the right. Deleting means shuffling everything back. If the array is full, you have to allocate a bigger one and copy everything over.
+
+A linked list flips these tradeoffs. You **lose** instant access — finding the 50th element means walking through 49 nodes first. But you **gain** effortless insertion and deletion. Want to slip a new element between two existing ones? Just rewire two pointers. No shuffling, no copying, no resizing.
+
+Think of it like this: an array is a row of numbered lockers in a hallway. Finding locker #50 is easy — just count down the hall. But if you need to add a locker between #25 and #26, you'd have to renumber (and physically move) every locker from #26 onward.
+
+A linked list is more like a scavenger hunt. Each clue tells you where the next clue is. You can't jump to clue #50 — you have to follow from clue #1. But inserting a new clue? Just change where one clue points to. Nobody else moves.
+
+## The Node
+
+The building block of a linked list is a **node**: a small struct that holds two things — a piece of data, and a pointer to the next node in the chain.
+
+Picture three nodes scattered at random addresses in memory. Node A might be at address `0x1000`, Node B at `0x2050`, Node C at `0x3008`. They're not adjacent the way array elements are. The only thing connecting them is that A's `next` pointer stores `0x2050` (pointing to B), and B's `next` stores `0x3008` (pointing to C). C's `next` is `NULL` — the end of the line.
+
+```
+  Memory (scattered):
+
+  [0x1000]  data: 10 | next: 0x2050  ---->  [0x2050]  data: 20 | next: 0x3008  ---->  [0x3008]  data: 30 | next: NULL
+```
+
+This is fundamentally different from arrays, where elements sit in a contiguous block. In a linked list, the data can live *anywhere* in the heap — the pointers are the glue.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    // Create three nodes manually
+    Node a = {10, NULL};
+    Node b = {20, NULL};
+    Node c = {30, NULL};
+
+    // Link them together
+    a.next = &b;
+    b.next = &c;
+
+    // Traverse the list
+    Node *current = &a;
+    while (current != NULL) {
+        printf("%d ", current->data);
+        current = current->next;
+    }
+    printf("\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+<Callout type="info">
+The last node's `next` pointer is `NULL` — that's how we know we've reached the end of the list. Every traversal loop checks for `NULL` as its stopping condition.
+</Callout>
+
+Notice the traversal pattern: start at the first node (the **head**), process it, then follow `next` to the next node. Repeat until `next` is `NULL`. This `while (current != NULL)` loop is the heartbeat of nearly every linked list operation. You'll write it dozens of times.
+
+## Creating Nodes on the Heap
+
+The example above put nodes on the stack, which is fine for demonstration but useless in practice. Stack variables die when the function returns. For a list that can grow and shrink at runtime, we need nodes that live on the **heap** via `malloc`.
+
+Every `malloc` call returns a fresh chunk of memory for one node. That node exists until we explicitly `free` it. This is both the power and the responsibility of linked lists — you control the memory lifecycle, but you *must* clean up after yourself.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int data) {
+    Node *node = malloc(sizeof(Node));
+    if (node == NULL) {
+        fprintf(stderr, "malloc failed\\n");
+        exit(1);
+    }
+    node->data = data;
+    node->next = NULL;
+    return node;
+}
+
+void print_list(Node *head) {
+    Node *curr = head;
+    while (curr != NULL) {
+        printf("%d -> ", curr->data);
+        curr = curr->next;
+    }
+    printf("NULL\\n");
+}
+
+void free_list(Node *head) {
+    while (head != NULL) {
+        Node *temp = head;
+        head = head->next;
+        free(temp);
+    }
+}
+
+int main() {
+    Node *head = create_node(1);
+    head->next = create_node(2);
+    head->next->next = create_node(3);
+
+    print_list(head);
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(n)" />
+
+<Callout type="warning">
+Always `free` every node when you're done with a list. Forgetting to free is a **memory leak**.
+</Callout>
+
+Notice the subtlety in `free_list`: we save `head` in a temporary pointer *before* advancing `head`, then free the temp. If we freed `head` first, we'd lose the `next` pointer and couldn't continue. This "save before you cut" pattern shows up repeatedly in linked list code — destroying a node destroys the road map to the rest of the list.
+
+## Insertion at the Head
+
+The big advantage of linked lists over arrays is insertion speed — *when you already know where to insert*. Inserting at the front (the head) is the simplest case and it's O(1):
+
+1. Create a new node.
+2. Point the new node's `next` at the current head.
+3. The new node *becomes* the head.
+
+That's it. No shifting, no copying. No matter how long the list is — 10 nodes or 10 million — head insertion takes the same constant time.
+
+```
+  Before:         head -> [10] -> [20] -> [30] -> NULL
+
+  New node [5]:    [5]
+                     \
+  After:          head -> [5] -> [10] -> [20] -> [30] -> NULL
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int data) {
+    Node *node = malloc(sizeof(Node));
+    node->data = data;
+    node->next = NULL;
+    return node;
+}
+
+// Insert at the beginning, return new head
+Node *push_front(Node *head, int data) {
+    Node *new_node = create_node(data);
+    new_node->next = head;
+    return new_node;
+}
+
+void print_list(Node *head) {
+    while (head != NULL) {
+        printf("%d ", head->data);
+        head = head->next;
+    }
+    printf("\\n");
+}
+
+void free_list(Node *head) {
+    while (head) {
+        Node *t = head;
+        head = head->next;
+        free(t);
+    }
+}
+
+int main() {
+    Node *head = NULL;
+    head = push_front(head, 30);
+    head = push_front(head, 20);
+    head = push_front(head, 10);
+
+    print_list(head);  // 10 20 30
+    free_list(head);
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+One thing to notice: `push_front` returns the new head. This is necessary because the caller's `head` pointer still points at the *old* first node. The function can't change the caller's pointer directly (C passes by value), so it returns the updated pointer instead. You'll see this `return new_head` pattern in almost every linked list function that can change the head.
+
+## Insertion at the Tail
+
+What if you want to add to the *end* instead of the beginning? Now you pay for the linked list's lack of random access. You have to walk the entire list to find the last node, then attach the new one. That makes tail insertion O(n).
+
+```
+  Before:   head -> [10] -> [20] -> [30] -> NULL
+                                      ^
+                                  walk here first
+
+  After:    head -> [10] -> [20] -> [30] -> [40] -> NULL
+```
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int data) {
+    Node *n = malloc(sizeof(Node));
+    n->data = data;
+    n->next = NULL;
+    return n;
+}
+
+Node *push_back(Node *head, int data) {
+    Node *new_node = create_node(data);
+    if (head == NULL) return new_node;
+
+    Node *curr = head;
+    while (curr->next != NULL) {
+        curr = curr->next;
+    }
+    curr->next = new_node;
+    return head;
+}
+
+void print_list(Node *head) {
+    while (head) {
+        printf("%d ", head->data);
+        head = head->next;
+    }
+    printf("\\n");
+}
+
+void free_list(Node *head) {
+    while (head) { Node *t = head; head = head->next; free(t); }
+}
+
+int main() {
+    Node *head = NULL;
+    head = push_back(head, 10);
+    head = push_back(head, 20);
+    head = push_back(head, 30);
+
+    print_list(head);  // 10 20 30
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+If you find yourself doing a lot of tail insertions, you can keep a separate `tail` pointer alongside `head`. Then tail insertion becomes O(1) too — just update `tail->next` and advance `tail`. But for now, the simple approach is fine for understanding the mechanics.
+
+## Deletion
+
+Deleting a node from a singly linked list is where pointer manipulation gets interesting. The core challenge: to remove a node, you need to make the *previous* node skip over it. But in a singly linked list, you can't go backward — you don't have a `prev` pointer.
+
+The solution: as you search for the node to delete, keep track of the node *before* it.
+
+Here's what happens step by step when deleting node with value 30 from `[10] -> [20] -> [30] -> [40]`:
+
+```
+  Step 1: curr is at [10]. curr->next->data is 20, not 30. Advance.
+  Step 2: curr is at [20]. curr->next->data is 30! Found it.
+  Step 3: Save pointer to [30] as to_delete.
+  Step 4: Set curr->next = to_delete->next (curr->next now points to [40]).
+  Step 5: free(to_delete).
+
+  Result: [10] -> [20] -> [40] -> NULL
+```
+
+There's also a special case: what if the *head* is the node to delete? Then there's no previous node. You just advance head to `head->next` and free the old head.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+Node *create_node(int d) {
+    Node *n = malloc(sizeof(Node));
+    n->data = d;
+    n->next = NULL;
+    return n;
+}
+
+// Delete first node with matching data, return new head
+Node *delete_node(Node *head, int target) {
+    if (head == NULL) return NULL;
+
+    // Special case: head is the target
+    if (head->data == target) {
+        Node *new_head = head->next;
+        free(head);
+        return new_head;
+    }
+
+    Node *curr = head;
+    while (curr->next != NULL && curr->next->data != target) {
+        curr = curr->next;
+    }
+
+    if (curr->next != NULL) {
+        Node *to_delete = curr->next;
+        curr->next = to_delete->next;
+        free(to_delete);
+    }
+
+    return head;
+}
+
+void print_list(Node *h) {
+    while (h) { printf("%d ", h->data); h = h->next; }
+    printf("\\n");
+}
+
+void free_list(Node *h) {
+    while (h) { Node *t = h; h = h->next; free(t); }
+}
+
+int main() {
+    Node *head = NULL;
+    for (int i = 1; i <= 5; i++) {
+        Node *n = create_node(i * 10);
+        n->next = head;
+        head = n;
+    }
+
+    printf("Before: ");
+    print_list(head);
+
+    head = delete_node(head, 30);
+    printf("After deleting 30: ");
+    print_list(head);
+
+    free_list(head);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The awkwardness of "tracking the previous node" is a fundamental limitation of singly linked lists. It's exactly why doubly linked lists exist — but that's the next lesson. For now, notice how the code checks `curr->next->data` instead of `curr->data`. That's the trick: we look one step ahead so we can re-link around the doomed node.
+
+## Exercise: Build and Print a List
+
+<Exercise
+  title="Build a list from input"
+  description="Read an integer N, then read N integers. Print them space-separated in the same order they were read. Hint: use push_back or build the list in reverse then reverse it."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build a list of n values
+    // Then print them space-separated followed by newline
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n10 20 30 40", expected_stdout: "10 20 30 40\n" },
+    { stdin: "1\n99", expected_stdout: "99\n" },
+    { stdin: "3\n-1 0 1", expected_stdout: "-1 0 1\n" }
+  ]}
+  hints={[
+    "Create a create_node function that mallocs a Node and sets data and next.",
+    "For push_back: walk to the end of the list, then set the last node's next to the new node.",
+    "Handle the empty list case separately: if head is NULL, the new node becomes head.",
+    "Print with spaces between elements. Use a flag or check if it's the first element."
+  ]}
+/>
+
+## Exercise: Sum of a Linked List
+
+<Exercise
+  title="Sum all elements"
+  description="Read N, then N integers. Build a linked list and print the sum of all elements."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build the list, compute sum, print it
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\n1 2 3 4", expected_stdout: "10\n" },
+    { stdin: "1\n42", expected_stdout: "42\n" },
+    { stdin: "3\n-5 10 -3", expected_stdout: "2\n" }
+  ]}
+  hints={[
+    "Build the list using any method (push_front or push_back).",
+    "Traverse the list with a while loop, accumulating sum.",
+    "Don't forget to free the list at the end (good practice)."
+  ]}
+/>
+
+## Exercise: Delete by Value
+
+<Exercise
+  title="Delete a value from a list"
+  description="Read N, then N integers to build a list. Read one more integer — the value to delete. Print the remaining list space-separated. If the value doesn't exist, print the list unchanged."
+  starterCode={`#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct Node {
+    int data;
+    struct Node *next;
+} Node;
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Build list of n elements
+    // Read target value
+    // Delete first occurrence of target
+    // Print remaining list
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\n10 20 30 40 50\n30", expected_stdout: "10 20 40 50\n" },
+    { stdin: "3\n1 2 3\n1", expected_stdout: "2 3\n" },
+    { stdin: "3\n1 2 3\n99", expected_stdout: "1 2 3\n" }
+  ]}
+  hints={[
+    "Handle the special case where the head node is the one to delete.",
+    "Walk through the list tracking the previous node so you can re-link around the deleted node.",
+    "Free the deleted node to avoid memory leaks."
+  ]}
+/>
+
+## What's Next
+
+We'll extend this concept to **doubly linked lists**, where each node has both a `next` and a `prev` pointer.

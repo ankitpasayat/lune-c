@@ -1,0 +1,388 @@
+---
+title: "Mutexes and Synchronization"
+module: "Threads & Concurrency"
+order: 2
+description: "Data races, mutexes, and protecting shared data in multi-threaded programs."
+difficulty: "advanced"
+---
+
+Threads share memory. That's their superpower — and their greatest danger. Without coordination, two threads writing to the same variable will corrupt it. This lesson is about understanding *why* that happens and how to prevent it.
+
+## The Bank Account Problem
+
+Imagine a bank account with $1000. Two ATMs process withdrawals simultaneously:
+
+1. **ATM-A** reads the balance: $1000
+2. **ATM-B** reads the balance: $1000
+3. **ATM-A** subtracts $200, writes $800
+4. **ATM-B** subtracts $300, writes $700
+
+The account should have $500, but it shows $700. The $200 withdrawal was silently lost because ATM-B overwrote ATM-A's update. It read the *old* balance before ATM-A's write took effect.
+
+This is a **data race** — and it's exactly what happens in your multithreaded C programs.
+
+## Seeing the Problem in Code
+
+The innocent-looking `counter++` is actually **three separate operations** at the CPU level:
+
+1. **Read** the current value from memory into a CPU register
+2. **Add** 1 to the register
+3. **Write** the result back to memory
+
+If two threads execute these steps interleaved, updates get lost:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+int counter = 0;  // Shared variable — DANGER!
+
+void *increment(void *arg) {
+    for (int i = 0; i < 100000; i++) {
+        counter++;  // NOT atomic! Read-modify-write
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Counter: %d\\n", counter);
+    printf("Expected: 200000\\n");
+    printf("The actual value may be less due to data race!\\n");
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+On a real system, you might get 150000, 180000, or occasionally 200000 (by luck). The result is **non-deterministic** — it depends on exactly how the OS schedules the threads. This is what makes race conditions so insidious: they might not show up during testing but crash your program in production.
+
+## The Bathroom Lock: Mutexes
+
+A **mutex** (mutual exclusion) is a lock. Only one thread can hold it at a time. Think of it like a bathroom lock: when someone's inside, the door is locked and everyone else waits in line. When they come out, the next person goes in.
+
+The code between `lock()` and `unlock()` is called the **critical section** — only one thread can be inside it at any moment.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+int counter = 0;
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+void *increment(void *arg) {
+    for (int i = 0; i < 100000; i++) {
+        pthread_mutex_lock(&lock);    // Acquire lock
+        counter++;                     // Critical section
+        pthread_mutex_unlock(&lock);  // Release lock
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Counter: %d\\n", counter);
+    printf("Expected: 200000\\n");
+    printf("With mutex: always correct!\\n");
+
+    pthread_mutex_destroy(&lock);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The mutex guarantees that between `lock()` and `unlock()`, no other thread can enter the same critical section. Thread A reads the counter, increments it, and writes it back — and only *then* does Thread B get its turn. No more lost updates.
+
+## Mutex Best Practices
+
+```c
+// Initialize statically:
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Or dynamically:
+pthread_mutex_t lock;
+pthread_mutex_init(&lock, NULL);
+// ... use ...
+pthread_mutex_destroy(&lock);
+```
+
+<Callout type="warning">
+**Always** unlock a mutex on every code path. A locked mutex that's never unlocked causes all waiting threads to hang forever (**deadlock**). Be especially careful with early returns and error paths — the lock must be released before *every* exit point.
+</Callout>
+
+## Deadlock: The Dining Philosophers
+
+**Deadlock** occurs when two or more threads wait for each other's locks, creating a circular dependency where nobody can make progress.
+
+The classic illustration is the **Dining Philosophers Problem**: five philosophers sit around a circular table, each needing two forks to eat. If they all pick up their left fork simultaneously, they're all holding one fork and waiting for the right fork — which is held by their neighbor. Nobody eats. Everyone starves.
+
+In code, deadlock looks like this:
+
+```c
+// Thread 1:               Thread 2:
+lock(A);                   lock(B);
+lock(B);  // waiting...    lock(A);  // waiting...
+// Both stuck forever!
+```
+
+Thread 1 holds A and waits for B. Thread 2 holds B and waits for A. Neither will ever release their lock because they're both stuck waiting.
+
+**The solution: lock ordering.** Define a global order for your locks (e.g., always lock A before B). If every thread acquires locks in the same order, circular dependencies can't form:
+
+```c
+// Thread 1:               Thread 2:
+lock(A);                   lock(A);  // same order!
+lock(B);                   lock(B);
+// No deadlock possible
+```
+
+Other prevention strategies:
+- **Try-lock**: Use `pthread_mutex_trylock()` — it returns immediately if the lock is held, so you can back off and retry
+- **Minimize lock scope**: Hold locks for the shortest time possible — less overlap means less deadlock risk
+
+## Protecting Complex Data Structures
+
+In real programs, you don't just protect single integers. You protect entire data structures by embedding a mutex alongside the data it guards:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+#include <string.h>
+
+typedef struct {
+    int items[100];
+    int count;
+    pthread_mutex_t lock;
+} SafeStack;
+
+void stack_init(SafeStack *s) {
+    s->count = 0;
+    pthread_mutex_init(&s->lock, NULL);
+}
+
+int stack_push(SafeStack *s, int value) {
+    pthread_mutex_lock(&s->lock);
+    if (s->count >= 100) {
+        pthread_mutex_unlock(&s->lock);
+        return -1;  // Full
+    }
+    s->items[s->count++] = value;
+    pthread_mutex_unlock(&s->lock);
+    return 0;
+}
+
+int stack_pop(SafeStack *s, int *value) {
+    pthread_mutex_lock(&s->lock);
+    if (s->count <= 0) {
+        pthread_mutex_unlock(&s->lock);
+        return -1;  // Empty
+    }
+    *value = s->items[--s->count];
+    pthread_mutex_unlock(&s->lock);
+    return 0;
+}
+
+SafeStack shared_stack;
+
+void *producer(void *arg) {
+    int id = *(int *)arg;
+    for (int i = 0; i < 5; i++) {
+        int val = id * 100 + i;
+        stack_push(&shared_stack, val);
+        printf("Producer %d pushed %d\\n", id, val);
+    }
+    return NULL;
+}
+
+int main() {
+    stack_init(&shared_stack);
+
+    pthread_t threads[3];
+    int ids[] = {1, 2, 3};
+
+    for (int i = 0; i < 3; i++) {
+        pthread_create(&threads[i], NULL, producer, &ids[i]);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("\\nStack has %d items\\n", shared_stack.count);
+    pthread_mutex_destroy(&shared_stack.lock);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The key design principle: the mutex lives *with* the data it protects. Any code that touches `count` or `items` must hold `lock`. This makes the invariant clear and localized.
+
+## Read-Write Locks
+
+A plain mutex is pessimistic: it blocks even when multiple threads only want to *read*. If your workload is read-heavy, you're forcing threads to take turns unnecessarily.
+
+A **read-write lock** (`pthread_rwlock_t`) allows multiple simultaneous readers OR one exclusive writer:
+
+```c
+pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+
+// Multiple readers can hold this simultaneously
+pthread_rwlock_rdlock(&rwlock);
+// ... read shared data ...
+pthread_rwlock_unlock(&rwlock);
+
+// Only one writer, blocks all readers
+pthread_rwlock_wrlock(&rwlock);
+// ... write shared data ...
+pthread_rwlock_unlock(&rwlock);
+```
+
+This is ideal for data that's read frequently but updated rarely — like a configuration table or a DNS cache.
+
+## Exercise: Critical Section Simulation
+
+<Exercise
+  title="Lock ordering"
+  description="Read N lock operations. Each is 'lock X' or 'unlock X' where X is a lock name. Track which locks are held. For each 'lock', print 'acquired X'. For each 'unlock', print 'released X'. If trying to lock an already-held lock, print 'deadlock risk: X already held'."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+#define MAX_LOCKS 10
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    char held[MAX_LOCKS][32];
+    int held_count = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[10], name[32];
+        scanf("%s %s", op, name);
+
+        if (strcmp(op, "lock") == 0) {
+            // Check if already held
+            int found = 0;
+            for (int j = 0; j < held_count; j++) {
+                if (strcmp(held[j], name) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (found) {
+                printf("deadlock risk: %s already held\\n", name);
+            } else {
+                strcpy(held[held_count++], name);
+                printf("acquired %s\\n", name);
+            }
+        } else if (strcmp(op, "unlock") == 0) {
+            int found = -1;
+            for (int j = 0; j < held_count; j++) {
+                if (strcmp(held[j], name) == 0) {
+                    found = j;
+                    break;
+                }
+            }
+            if (found >= 0) {
+                // Remove by shifting
+                for (int j = found; j < held_count - 1; j++) {
+                    strcpy(held[j], held[j + 1]);
+                }
+                held_count--;
+                printf("released %s\\n", name);
+            }
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "4\nlock A\nlock B\nunlock A\nunlock B", expected_stdout: "acquired A\nacquired B\nreleased A\nreleased B\n" },
+    { stdin: "3\nlock A\nlock A\nunlock A", expected_stdout: "acquired A\ndeadlock risk: A already held\nreleased A\n" },
+    { stdin: "4\nlock X\nlock Y\nunlock Y\nunlock X", expected_stdout: "acquired X\nacquired Y\nreleased Y\nreleased X\n" }
+  ]}
+  hints={[
+    "Maintain an array of currently held lock names.",
+    "Before acquiring, check if the lock is already in the held array.",
+    "When unlocking, remove the lock from the held array."
+  ]}
+/>
+
+## Exercise: Race Condition Detector
+
+<Exercise
+  title="Detect unsafe access"
+  description="Read N operations on a shared variable. Each is 'read T' or 'write T' where T is a thread ID. If a write happens while another thread has an unmatched read (or another write), print 'RACE'. Otherwise print 'SAFE'. Reads by different threads are always safe."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    // Track last writer and active readers
+    int last_writer = -1;
+    int has_writer = 0;
+    int readers[10] = {0};
+    int reader_count = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[10];
+        int thread;
+        scanf("%s %d", op, &thread);
+
+        if (strcmp(op, "write") == 0) {
+            // Race if any reader from different thread or any other writer
+            int race = 0;
+            if (has_writer && last_writer != thread) race = 1;
+            for (int j = 0; j < reader_count; j++) {
+                if (readers[j] != thread) { race = 1; break; }
+            }
+            if (race) {
+                printf("RACE\\n");
+            } else {
+                printf("SAFE\\n");
+            }
+            has_writer = 1;
+            last_writer = thread;
+            reader_count = 0;
+        } else {
+            // Race if writer from different thread
+            int race = 0;
+            if (has_writer && last_writer != thread) race = 1;
+            if (race) {
+                printf("RACE\\n");
+            } else {
+                printf("SAFE\\n");
+            }
+            readers[reader_count++] = thread;
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\nread 1\nread 2\nwrite 1", expected_stdout: "SAFE\nSAFE\nRACE\n" },
+    { stdin: "2\nwrite 1\nwrite 2", expected_stdout: "SAFE\nRACE\n" },
+    { stdin: "3\nwrite 1\nread 1\nread 1", expected_stdout: "SAFE\nSAFE\nSAFE\n" }
+  ]}
+  hints={[
+    "Multiple reads from different threads are safe.",
+    "A write while another thread has an active read is a race.",
+    "A write while another thread has an active write is a race."
+  ]}
+/>
+
+## What's Next
+
+Beyond mutexes: **condition variables and semaphores** — more sophisticated synchronization for producer-consumer patterns.

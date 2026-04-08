@@ -1,0 +1,391 @@
+---
+title: "Atomic Operations & Thread Safety"
+module: "Threads & Concurrency"
+order: 4
+description: "Lock-free programming with atomics, thread-local storage, and common thread-safe patterns."
+difficulty: "advanced"
+---
+
+Mutexes work, but they have a cost. Every `lock()`/`unlock()` involves a context switch into the kernel (potentially), and any thread waiting for a held lock is blocked — idle, using no CPU, making no progress. For simple operations like incrementing a counter, this overhead can dwarf the actual work.
+
+What if you could update a shared variable safely *without a lock*? That's what **atomic operations** provide.
+
+## Why Even x++ Isn't Safe
+
+You've seen this before, but let's be precise about *why*. The C statement `x++` compiles to something like:
+
+```
+MOV  eax, [x]      ; Step 1: Read x from memory into a register
+ADD  eax, 1         ; Step 2: Add 1 to the register
+MOV  [x], eax       ; Step 3: Write the result back to memory
+```
+
+That's three separate CPU instructions. Between any two of them, the operating system can switch to another thread. If two threads both execute Step 1 before either executes Step 3, one increment is lost.
+
+This is a **read-modify-write** problem, and it applies to any compound operation: `x--`, `x += 5`, even `x = x * 2`. The read and the write are separate steps, and another thread can sneak in between.
+
+## What "Atomic" Means
+
+An **atomic** operation happens as a single, indivisible step from the perspective of all other threads. No thread can ever see the operation "half done." The CPU provides special instructions (like `LOCK XADD` on x86) that perform the read-modify-write in a single, uninterruptible step.
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdatomic.h>
+#include <pthread.h>
+
+// Regular counter — race condition
+int regular_counter = 0;
+
+// Atomic counter — always correct without locks
+atomic_int atomic_counter = 0;
+
+void *increment_both(void *arg) {
+    for (int i = 0; i < 100000; i++) {
+        regular_counter++;              // NOT thread-safe
+        atomic_fetch_add(&atomic_counter, 1);  // Thread-safe
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, increment_both, NULL);
+    pthread_create(&t2, NULL, increment_both, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Regular counter: %d (may be wrong)\\n", regular_counter);
+    printf("Atomic counter:  %d (always 200000)\\n",
+           atomic_load(&atomic_counter));
+
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The atomic version uses hardware instructions that guarantee the read-modify-write happens as a single unit. No locks, no blocking, no context switches — just a slightly more expensive CPU instruction.
+
+## C11 Atomic Types and Operations
+
+C11 introduced `<stdatomic.h>` with built-in atomic types and operations:
+
+```c
+#include <stdatomic.h>
+
+atomic_int       x = 0;      // Atomic int
+atomic_long      y = 0;      // Atomic long
+atomic_bool      flag = false; // Atomic boolean
+atomic_uintptr_t ptr = 0;    // Atomic pointer-sized int
+```
+
+The key operations:
+
+```c
+atomic_int x = 0;
+
+atomic_store(&x, 5);            // x = 5 (atomically)
+int val = atomic_load(&x);      // val = x (atomically)
+atomic_fetch_add(&x, 1);        // x++ (returns old value)
+atomic_fetch_sub(&x, 1);        // x-- (returns old value)
+atomic_exchange(&x, 10);        // swap x with 10 (returns old value)
+```
+
+Each of these is a single atomic operation. `atomic_fetch_add` is the atomic equivalent of `x++` — it reads the value, adds to it, and writes it back, all in one indivisible step.
+
+## Compare-and-Swap: The Foundation of Lock-Free Programming
+
+The most powerful atomic operation is **compare-and-swap (CAS)**. It says: "If the value is what I expect, change it to this new value. Otherwise, do nothing and tell me what the actual value is."
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdatomic.h>
+
+int main() {
+    atomic_int value = 5;
+
+    // Compare-and-swap: if value == expected, set to desired
+    int expected = 5;
+    int desired = 10;
+
+    _Bool success = atomic_compare_exchange_strong(&value, &expected, desired);
+    printf("CAS(value=5, expected=5, desired=10): %s\\n",
+           success ? "success" : "failed");
+    printf("Value is now: %d\\n\\n", atomic_load(&value));
+
+    // CAS fails if value != expected
+    expected = 5;  // But value is 10 now!
+    desired = 20;
+    success = atomic_compare_exchange_strong(&value, &expected, desired);
+    printf("CAS(value=10, expected=5, desired=20): %s\\n",
+           success ? "success" : "failed");
+    printf("Value is now: %d\\n", atomic_load(&value));
+    printf("Expected was updated to: %d (actual value)\\n", expected);
+
+    return 0;
+}
+`} time="O(1)" space="O(1)" />
+
+Why is CAS so important? It lets you implement **optimistic concurrency**: instead of locking data before modifying it, you read the current value, compute the new value, and *attempt* to swap it in. If another thread modified the value in the meantime, CAS fails and you simply retry with the updated value.
+
+<Callout type="info">
+CAS is the building block of lock-free data structures. The pattern is: read current value, compute new value, CAS to update. If CAS fails (another thread changed it), retry.
+</Callout>
+
+## Lock-Free Counter with CAS
+
+Here's the CAS retry loop in action — a lock-free increment using compare-and-swap:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <stdatomic.h>
+#include <pthread.h>
+
+atomic_int counter = 0;
+
+// Lock-free increment using CAS
+void lock_free_increment(void) {
+    int old_val, new_val;
+    do {
+        old_val = atomic_load(&counter);
+        new_val = old_val + 1;
+    } while (!atomic_compare_exchange_weak(&counter, &old_val, new_val));
+    // Retry if another thread changed counter between load and CAS
+}
+
+void *worker(void *arg) {
+    for (int i = 0; i < 100000; i++) {
+        lock_free_increment();
+    }
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[4];
+    for (int i = 0; i < 4; i++) {
+        pthread_create(&threads[i], NULL, worker, NULL);
+    }
+    for (int i = 0; i < 4; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("Lock-free counter: %d\\n", atomic_load(&counter));
+    printf("Expected: 400000\\n");
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+The `_weak` variant of CAS is used in loops because it's allowed to fail spuriously (even when the value matches), which lets the CPU use more efficient instructions on some architectures. In a retry loop, spurious failure just means one extra iteration — no correctness issue.
+
+## When to Use Atomics vs Mutexes
+
+Atomics are perfect for **simple operations** on **single variables**: counters, flags, pointers. They're faster than mutexes because they avoid kernel involvement.
+
+But atomics can't protect **compound operations** that span multiple variables. If you need to update a linked list node (changing both a `next` pointer and a `data` field), you need both updates to happen atomically *together*. A single atomic instruction can't do that — you need a mutex.
+
+Rule of thumb:
+- **Single counter or flag** → atomic
+- **Multiple related variables** → mutex
+- **Complex data structure** → mutex (or a carefully designed lock-free algorithm, which is expert-level work)
+
+## Thread-Local Storage
+
+Sometimes the cleanest solution to shared data isn't synchronization — it's **not sharing at all**. Thread-local storage gives each thread its own private copy of a variable:
+
+<Editor defaultCode={`#include <stdio.h>
+#include <pthread.h>
+
+// Each thread has its own copy of this variable
+_Thread_local int thread_counter = 0;
+
+void *worker(void *arg) {
+    int id = *(int *)arg;
+
+    // Each thread modifies its own copy
+    for (int i = 0; i < 5; i++) {
+        thread_counter++;
+    }
+    printf("Thread %d: counter = %d\\n", id, thread_counter);
+
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[3];
+    int ids[] = {1, 2, 3};
+
+    for (int i = 0; i < 3; i++) {
+        pthread_create(&threads[i], NULL, worker, &ids[i]);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("Main thread counter: %d\\n", thread_counter);
+    return 0;
+}
+`} time="O(n)" space="O(1)" />
+
+Each thread sees `thread_counter` at 5. No locks needed, no races possible, because each thread has its own copy. Thread-local storage is ideal for per-thread caches, error codes (like `errno`), or random number generator state.
+
+## Memory Ordering (Advanced)
+
+By default, atomic operations use **sequential consistency** — the strongest guarantee, ensuring all threads see operations in the same order. This is the safest but slowest option.
+
+For performance-critical code, C11 provides weaker memory orderings:
+
+| Order | Speed | Guarantee |
+|-------|-------|-----------|
+| `memory_order_relaxed` | Fastest | Only atomicity, no ordering |
+| `memory_order_acquire` | Medium | Reads after this see writes before release |
+| `memory_order_release` | Medium | Writes before this visible after acquire |
+| `memory_order_seq_cst` | Slowest | Total ordering (default) |
+
+```c
+// Default: sequential consistency (safest, slowest)
+atomic_store(&x, 1);
+
+// Explicit ordering for performance
+atomic_store_explicit(&x, 1, memory_order_release);
+int val = atomic_load_explicit(&x, memory_order_acquire);
+```
+
+<Callout type="tip">
+When in doubt, use the default `memory_order_seq_cst`. Only optimize memory ordering after profiling shows it's a bottleneck. Getting memory ordering wrong causes bugs that are nearly impossible to reproduce or debug.
+</Callout>
+
+## Common Thread-Safe Patterns
+
+### Spin Lock
+
+A spin lock is the simplest lock: it uses an atomic flag and busy-waits until it can acquire it. Fast for very short critical sections (nanoseconds), but wasteful for anything longer:
+
+```c
+atomic_flag lock = ATOMIC_FLAG_INIT;
+
+void spin_lock(atomic_flag *lock) {
+    while (atomic_flag_test_and_set(lock)) {
+        // Busy-wait (spin)
+    }
+}
+
+void spin_unlock(atomic_flag *lock) {
+    atomic_flag_clear(lock);
+}
+```
+
+### Once Initialization
+
+`pthread_once` ensures a function is called exactly once, even if multiple threads try simultaneously. Perfect for lazy initialization of shared resources:
+
+```c
+#include <pthread.h>
+
+pthread_once_t once = PTHREAD_ONCE_INIT;
+
+void init_function(void) {
+    // Called exactly once, even if multiple threads call pthread_once
+    printf("Initialized!\n");
+}
+
+// In any thread:
+pthread_once(&once, init_function);
+```
+
+## Exercise: CAS Simulation
+
+<Exercise
+  title="Compare and swap"
+  description="Simulate CAS operations. Read N operations, each: 'CAS current expected desired'. If current == expected, update to desired and print 'SUCCESS new_value'. Otherwise print 'FAILED current_value'."
+  starterCode={`#include <stdio.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int value;
+    scanf("%d", &value);  // Initial value
+
+    for (int i = 0; i < n; i++) {
+        int expected, desired;
+        scanf("%d %d", &expected, &desired);
+
+        if (value == expected) {
+            value = desired;
+            printf("SUCCESS %d\\n", value);
+        } else {
+            printf("FAILED %d\\n", value);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "3\n5\n5 10\n10 20\n5 30", expected_stdout: "SUCCESS 10\nSUCCESS 20\nFAILED 20\n" },
+    { stdin: "2\n0\n0 1\n0 2", expected_stdout: "SUCCESS 1\nFAILED 1\n" },
+    { stdin: "1\n42\n42 0", expected_stdout: "SUCCESS 0\n" }
+  ]}
+  hints={[
+    "CAS succeeds only when the current value matches the expected value.",
+    "On success, the value is updated to desired.",
+    "On failure, the value remains unchanged."
+  ]}
+/>
+
+## Exercise: Thread-Safe Counter Operations
+
+<Exercise
+  title="Atomic operation simulator"
+  description="Read N operations on a counter (starting at 0): 'add X' (atomic add), 'sub X' (atomic subtract), 'cas E D' (compare-and-swap), 'load' (print current value). For cas, print 'ok' or 'fail'. For load, print the value."
+  starterCode={`#include <stdio.h>
+#include <string.h>
+
+int main() {
+    int n;
+    scanf("%d", &n);
+
+    int value = 0;
+
+    for (int i = 0; i < n; i++) {
+        char op[10];
+        scanf("%s", op);
+
+        if (strcmp(op, "add") == 0) {
+            int x;
+            scanf("%d", &x);
+            value += x;
+        } else if (strcmp(op, "sub") == 0) {
+            int x;
+            scanf("%d", &x);
+            value -= x;
+        } else if (strcmp(op, "cas") == 0) {
+            int expected, desired;
+            scanf("%d %d", &expected, &desired);
+            if (value == expected) {
+                value = desired;
+                printf("ok\\n");
+            } else {
+                printf("fail\\n");
+            }
+        } else if (strcmp(op, "load") == 0) {
+            printf("%d\\n", value);
+        }
+    }
+
+    return 0;
+}
+`}
+  testCases={[
+    { stdin: "5\nadd 5\nadd 3\nload\nsub 2\nload", expected_stdout: "8\n6\n" },
+    { stdin: "4\nadd 10\ncas 10 20\ncas 10 30\nload", expected_stdout: "ok\nfail\n20\n" },
+    { stdin: "3\nload\nadd 1\nload", expected_stdout: "0\n1\n" }
+  ]}
+  hints={[
+    "Track a single integer value, starting at 0.",
+    "add and sub modify the value directly.",
+    "cas only modifies if the current value matches expected."
+  ]}
+/>
+
+## What's Next
+
+Module complete! Next up: **IPC & Sockets** — communicating between processes and across networks.
