@@ -151,3 +151,14 @@
   content: counter(line);
   @apply mr-4 inline-block w-4 text-right text-muted-foreground/50;
 }
+
+/* Dual theme: switch shiki CSS variables based on light/dark mode */
+[data-rehype-pretty-code-figure] code span {
+  color: var(--shiki-light) !important;
+  background-color: var(--shiki-light-bg) !important;
+}
+
+.dark [data-rehype-pretty-code-figure] code span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+}

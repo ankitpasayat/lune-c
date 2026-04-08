@@ -59,7 +59,7 @@ export default async function LessonPage({ params }: PageProps) {
       blockJS: false,
       mdxOptions: {
         remarkPlugins: [remarkGfm],
-        rehypePlugins: [[rehypePrettyCode, { theme: "one-dark-pro", keepBackground: false }]],
+        rehypePlugins: [[rehypePrettyCode, { theme: { dark: "one-dark-pro", light: "github-light" }, defaultColor: false, keepBackground: false }]],
       },
     },
   });
